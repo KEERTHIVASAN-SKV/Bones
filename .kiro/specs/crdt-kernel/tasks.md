@@ -171,16 +171,18 @@ Applications (outside kernel scope)
 
 - [ ] 9. **RGA Concurrent Insert Ordering** (KER-009)
   - Implement deterministic ordering for concurrent inserts targeting same anchor
-  - Use Op ID (replicaId + seq) for consistent tie-breaking
+  - Use Op ID (replicaId + seq) for consistent tie-breaking with code-unit comparison:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
+  - Ensure tombstones are included in scan when determining insertion position, but are not used as insertion points
   - Test that two replicas applying same concurrent inserts produce identical order
   - **Acceptance Criteria**:
     - Same set of concurrent inserts always order the same way
-    - Order is deterministic across all replicas
-    - Property test: any permutation of concurrent inserts converges
+    - Order is deterministic across all replicas (code-unit comparison only)
+    - Tombstones included in position scan but skipped as insertion targets
+    - Property test: any permutation of concurrent inserts converges to identical order
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-006, KER-008
-  - **Validation**: Unit test: 2+ concurrent inserts → verify Op ID sort order; PBT: random insertion order → same final sequence
+  - **Validation**: Unit test: 2+ concurrent inserts → verify Op ID sort order (code-unit only); tombstone scan test; PBT: random insertion order → same final sequence
 
 - [ ] 10. **RGA Payload Reclamation Preparation** (KER-010)
   - Add `payloadReclaimed` flag to Element interface
@@ -244,15 +246,17 @@ Applications (outside kernel scope)
 - [ ] 14. **VersionVector Serialization and Cloning** (KER-014)
   - Implement deterministic serialization (JSON with sorted keys)
   - Implement deep cloning for safety
+  - Use code-unit comparison for replicaId ordering in serialization:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
   - Test round-trip (serialize → deserialize = original)
   - **Acceptance Criteria**:
-    - Serialization is deterministic (same VV always serializes same)
+    - Serialization is deterministic (same VV always serializes same, code-unit ordering only)
     - Deserialization recovers original VV exactly
     - Clones are independent (mutating clone doesn't affect original)
+    - Op ID comparison uses code-unit only (no locale-dependent functions)
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-011
-  - **Validation**: Unit test serialization; PBT: random VVs → serialize/deserialize → identical
+  - **Validation**: Unit test serialization with deterministic comparison; PBT: random VVs → serialize/deserialize → identical
 
 #### OpLog Module
 
@@ -417,16 +421,17 @@ Applications (outside kernel scope)
   - Create `src/snapshot.ts` with:
     - `createSnapshot(rga, vv, membership, gcStats)` function
     - Include deep copies of sequence, VV, membership
-    - Add metadata (creator, timestamp, GC state)
+    - Add metadata (creator replicaId, logicalIndex derived from kernel state, GC state) — NO wall-clock timestamp (Date.now())
     - Ensure no shared mutable references
   - **Acceptance Criteria**:
     - Snapshot includes all state needed to bootstrap
     - Deep copies prevent external mutation
-    - Metadata is recorded
+    - Metadata uses logical index from kernel state, not Date.now()
+    - No Date.now() calls in kernel code
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-010, KER-011, KER-018, KER-025
-  - **Validation**: Unit test: create snapshot → verify all fields present; mutate original → verify snapshot unchanged
+  - **Validation**: Unit test: create snapshot → verify all fields present; verify no Date.now() calls; mutate original → verify snapshot unchanged
 
 - [ ] 27. **Snapshot Serialization** (KER-027)
   - Implement `serializeSnapshot(snapshot)` function: JSON serialization with sorted keys
@@ -1151,18 +1156,20 @@ Applications (outside kernel scope)
     - Collect VV acknowledgments from replicas
     - Compute stable frontier
     - Broadcast frontier updates to replicas
-    - Detect and evict zombie peers (timeout-based)
-    - Broadcast membership updates
+    - Track stalled/zombie peers in Graveyard panel (detection only, no automatic timeout-based eviction)
+    - Provide manual eviction via "Exorcise" UI action — only operator can trigger eviction
+    - Broadcast membership updates when eviction is triggered
   - Simple HTTP or WebSocket API
   - **Acceptance Criteria**:
     - Coordinator computes frontier correctly
-    - Membership changes work
-    - Eviction timeout enforced
+    - Membership changes work (manual eviction only)
+    - Graveyard panel displays stalled peers
     - Broadcast mechanism works
+    - No automatic timeout-based eviction in kernel
   - **Effort**: Large
   - **Priority**: MUST
   - **Dependencies**: KER-032, KER-042
-  - **Validation**: Integration test with coordinator
+  - **Validation**: Integration test with coordinator; verify manual eviction via UI; verify no auto-eviction timeout
 
 - [ ] 76. **WebRTC Transport [STRETCH]** (KER-076)
   - Implement WebRTC-based transport layer
@@ -1263,7 +1270,7 @@ All tasks must respect these dependencies:
 - **Property Tests Depend on Network Sim**: KER-033 must complete before PBT (KER-046+) can fully run
 - **Documentation is Parallel**: KER-069 to KER-072 can start once design is final (doesn't block implementation)
 - **Optional/SHOULD/STRETCH**: KER-043, KER-044, KER-071, KER-073, KER-074, KER-076 can be deferred if time is tight
-- **Order if Behind**: Cut in order: WebRTC (KER-076) → IndexedDB (KER-074) → BroadcastChannel stretch (not in scope) → UI polish
+- **Order if Behind**: Cut in order: WebRTC (KER-076) → Stage 2 GC (stretch, first cut after WebRTC) → LWW map → elaborate visual design. BroadcastChannel (KER-073) is a DECIDED Should-have, not cut before WebRTC.
 
 ## Acceptance and Sign-Off
 
@@ -1276,4 +1283,8 @@ Each task must satisfy:
 6. **Documented** with JSDoc and README updates
 
 Upon completion of all MUST tasks, the kernel is feature-complete and ready for applications to build on top.
+
+
+
+
 

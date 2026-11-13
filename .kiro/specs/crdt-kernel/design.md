@@ -5,7 +5,7 @@
 The CRDT Kernel is a deterministic, pure TypeScript implementation of a Replicated Growable Array (RGA) sequence CRDT designed for offline-first collaborative applications. It manages causal consistency, duplicate suppression, membership-based eviction, and memory-efficient garbage collection through a clean API surface.
 
 **Key Design Principles:**
-- **Pure & Deterministic**: No `Date.now()`, `Math.random()`, DOM, network, or storage inside `/kernel`
+- **Pure & Deterministic**: No `logicalIndex`, `Math.random()`, DOM, network, or storage inside `/kernel`
 - **Correctness-First**: Extensive property-based testing with fast-check; comprehensive unit tests
 - **Memory-Efficient**: Stage 1 GC reclaims payload of causally stable deletes while retaining structural anchors
 - **API Simplicity**: Clean public interface hiding implementation complexity
@@ -121,7 +121,7 @@ interface OpId {
 // Lexicographic comparison (used in RGA ordering)
 function compareOpIds(a: OpId, b: OpId): number {
   if (a.replicaId !== b.replicaId) {
-    return a.replicaId.localeCompare(b.replicaId);
+    return a.replicaId < b.replicaId ? -1 : a.replicaId > b.replicaId ? 1 : 0;
   }
   return a.seq - b.seq;
 }
@@ -231,13 +231,13 @@ interface Snapshot<T = any> {
 }
 
 interface SnapshotMetadata {
-  createdAt?: number;               // Logical timestamp
-  replicaId?: string;               // Snapshot creator
+  replicaId?: string;               // Snapshot creator (for reference)
   gcStats?: {                        // GC state at snapshot time
     bytesReclaimed: number;
     tombstonesRetained: number;
     reclaimableOps: number;
   };
+  logicalIndex?: number;            // Logical index or frontier reference (derived from kernel state, not wall-clock)
 }
 ```
 
@@ -344,10 +344,11 @@ function applyInsert(
   }
 
   // Find correct position by sorting concurrent inserts by Op ID
+  // Scan includes tombstones; insertion proceeds until Op ID is >= current element.
+  // Tombstones are structural anchors and are traversed during position calculation.
   while (
     insertAt < rga.length &&
-    compareOpIds(rga[insertAt].id, newElement.id) < 0 &&
-    !rga[insertAt].deleted
+    compareOpIds(rga[insertAt].id, newElement.id) < 0
   ) {
     insertAt++;
   }
@@ -641,7 +642,8 @@ function createSnapshot<T>(
     vv: vvCopy,
     membership: membershipCopy,
     metadata: {
-      createdAt: Date.now(),  // Outside kernel; would be logical timestamp in pure kernel
+      creator: "replicaId",
+      logicalIndex: rga.length,  // Derived from kernel state; number of applied operations
       gcStats,
     },
   };
@@ -748,7 +750,10 @@ class CRDT<T = any> {
 
   /**
    * Get the current sequence (non-deleted elements only).
-   * @returns Array of non-deleted elements, sorted by Op ID
+   * Visible elements are ordered by their anchor-based placement in the RGA, with concurrent 
+   * inserts at the same anchor ordered deterministically by Op ID (replicaId first, then sequence).
+   * All replicas applying the same operations in any order produce identical visible sequences.
+   * @returns Array of non-deleted elements, deterministically ordered by anchor and Op ID
    */
   getSequence(): Element<T>[];
 
@@ -1156,8 +1161,10 @@ The kernel does not handle network I/O. Instead, applications provide:
 Manages:
 - Collecting VV acks from replicas
 - Computing stable frontier (component-wise minimum)
-- Detecting and evicting zombie peers (timeout-based)
+- Maintaining a list of stalled peers (those that have not acknowledged for a configurable period) and displaying them in the Graveyard panel
 - Broadcasting membership updates and frontiers
+
+**Eviction Policy**: The coordinator maintains a list of stalled peers (those that have not acknowledged for a configurable period) and displays them in the Graveyard panel. Eviction occurs only when the operator explicitly triggers an 'Exorcise' action through the UI. The coordinator never automatically evicts replicas.
 
 ### Applications (Graveyard Whiteboard, Cursed Checklist)
 
@@ -1261,4 +1268,5 @@ For future work, Raft or similar could replicate the coordinator, but MVP opts f
 2. Refine based on architectural feedback
 3. Proceed to task creation and implementation
 4. Run property-based tests during development
+
 

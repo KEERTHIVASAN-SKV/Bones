@@ -52,9 +52,10 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 1. THE Kernel SHALL implement a sequence CRDT following the RGA (Replicated Growable Array) model.
 2. WHEN an insert operation is created at a replica, THE Kernel SHALL assign it a unique Op ID of form `(replicaId, sequence)`.
 3. WHEN an insert is applied, THE Kernel SHALL place it after a specified anchor element or `HEAD` if no anchor is given.
+3.5. WHEN determining insertion order for concurrent inserts at the same anchor, THE Kernel SHALL include tombstones (deleted elements) when scanning through the sequence to find the correct position by Op ID, but THE Kernel SHALL NOT place new elements before or within tombstones. Tombstones maintain their structural position in the sequence for causality tracking, and concurrent inserts are ordered relative to each other by Op ID, not relative to tombstones.
 4. WHEN two concurrent inserts target the same anchor, THE Kernel SHALL resolve ordering using the Op IDs (replica ID, then sequence) to ensure deterministic, consistent placement across all replicas.
 5. WHEN a delete operation is applied, THE Kernel SHALL mark the element as deleted (tombstone) and retain its structural position.
-6. THE Kernel SHALL maintain insertion order visibility to the application (elements sorted by their Op IDs and creation order).
+6. THE Kernel SHALL maintain insertion order visibility to the application. Visible (non-deleted) elements are ordered by their anchor-based placement in the RGA, with concurrent inserts at the same anchor ordered deterministically by Op ID (replicaId first, then sequence). This ensures that all replicas, upon applying the same set of operations in any order, produce identical visible sequences.
 7. WHEN traversing the sequence, THE Kernel SHALL return only non-deleted elements to the application; deleted elements (tombstones) remain internal.
 8. THE Kernel SHALL ensure that concurrent insert and delete operations on the same element resolve consistently across all replicas without requiring a central coordinator for ordering.
 
@@ -77,7 +78,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 2. WHEN an operation is created at a replica, THE Kernel SHALL assign an Op ID of form `(replicaId, sequence)` where `sequence` is a monotonically increasing integer starting from 1.
 3. THE Kernel SHALL ensure that no two operations from the same replica have the same `sequence`.
 4. THE Kernel SHALL ensure that Op IDs are globally unique across all replicas (no two replicas generate the same Op ID).
-5. WHEN comparing two Op IDs, THE Kernel SHALL use lexicographic ordering: first by `replicaId`, then by `sequence` within the same replica.
+5. WHEN comparing two Op IDs, THE Kernel SHALL use lexicographic ordering: first by `replicaId`, then by `sequence` within the same replica. Lexicographic ordering SHALL be implemented using deterministic code-unit comparison (not locale-dependent string comparison): `replicaId1 < replicaId2 ? -1 : replicaId1 > replicaId2 ? 1 : 0` for the replicaId comparison, followed by numeric comparison for sequence. This ensures determinism across all locales.
 6. THE Kernel SHALL track the current sequence number for each replica locally (as part of the state) and increment it atomically with each operation.
 
 #### Correctness Properties
@@ -228,8 +229,8 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 #### Acceptance Criteria
 
-1. THE Coordinator SHALL maintain a timeout threshold (e.g., 30 seconds) for detecting zombie peers. **[PROPOSED]**
-2. WHEN a replica stops acknowledging its VV before the timeout elapses, THE Coordinator SHALL mark it as a zombie.
+1. THE Coordinator SHALL maintain a list of stalled replicas (those that have not acknowledged for an application-configurable period). THE Graveyard panel SHALL display stalled replicas, allowing the operator to manually trigger eviction through an 'Exorcise' action. THE Coordinator SHALL evict a replica only when explicitly instructed by the application, never automatically.
+2. WHEN the operator manually triggers eviction through the Graveyard panel, THE Coordinator SHALL mark the targeted replica as a zombie and proceed with removal.
 3. WHEN the Coordinator evicts a zombie replica, IT SHALL:
    - Remove the replica's ID from the active membership view.
    - Increment the epoch.
@@ -238,13 +239,13 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - Recognize that its current incarnation is no longer active.
    - Not apply any further operations from its current Replica ID.
    - Prepare to rejoin with a new incarnation (new Replica ID) if it wants to continue editing.
-5. THE Coordinator SHALL NOT evict a replica that is actively acknowledging its VV (no timeout).
+5. THE Coordinator SHALL NOT evict a replica that is actively acknowledging its VV while it remains in the active set.
 6. IF a replica that was evicted later reconnects and tries to send operations with its old Replica ID, THE Remaining replicas SHALL reject them (see Requirement 10, Fencing).
 
 #### Correctness Properties
 
-- **Safety**: A replica is evicted only after failing to acknowledge for the configured timeout.
-- **Liveness**: The stable frontier advances after a zombie is evicted (no forever-stalled frontier).
+- **Safety**: A replica is evicted only when explicitly instructed by the operator through the Graveyard panel.
+- **Liveness**: The stable frontier advances after a zombie is manually evicted (no forever-stalled frontier).
 - **Consistency**: All active replicas agree on the evicted set and epoch after receiving the membership update.
 
 ---
@@ -328,7 +329,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - The current RGA sequence (all elements, with their Op IDs and tombstone/delete status)
    - The current Version Vector (VV)
    - The current Membership View (active replica IDs and epoch)
-   - A timestamp or logical index (for reference)
+   - Logical metadata derived from kernel state (e.g., causal frontier at snapshot time, not wall-clock timestamp)
 2. THE Snapshot SHALL be serializable to a compact format (e.g., JSON or binary) suitable for storage or transmission.
 3. WHEN a new replica (or a returning replica after eviction) is bootstrapped with a Snapshot, THE Kernel SHALL:
    - Initialize the RGA from the snapshot's sequence.
