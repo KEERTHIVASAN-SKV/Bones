@@ -2,7 +2,7 @@
 
 ## Overview
 
-This implementation plan breaks down the CRDT Kernel design into discrete, actionable tasks organized into 10 major groups: project setup, core modules, orchestrator, testing infrastructure, unit tests, property-based tests, integration tests, documentation, transport layer, and coordinator service. Tasks are prioritized as MUST (core functionality), SHOULD (enhancements), or STRETCH (advanced goals). Each task includes effort estimates, dependencies, acceptance criteria, and validation strategies.
+This implementation plan breaks down the CRDT Kernel design into discrete, actionable tasks organized into 9 major groups: project setup, core modules, orchestrator, testing infrastructure, unit tests, property-based tests, integration tests, documentation, and coordinator service. Tasks are prioritized as MUST (core functionality), SHOULD (enhancements), or STRETCH (advanced goals). Each task includes effort estimates, dependencies, acceptance criteria, and validation strategies.
 
 **Target Completion**: Dec 3, 2026 (before Kiroween Dec 4 deadline)
 
@@ -11,29 +11,24 @@ This implementation plan breaks down the CRDT Kernel design into discrete, actio
 ## Task Groups and Dependencies
 
 ```
-Setup (KER-001 to KER-005)
+Setup (KER-006 to KER-028)
+  ├→ Project Setup (KER-006 to KER-010)
+  ├→ Core RGA Module (KER-011 to KER-015)
+  ├→ Core VV Module (KER-016 to KER-020)
+  ├→ Core OpLog & Membership (KER-021 to KER-025)
+  └→ Core GC & Snapshot (KER-026 to KER-028)
   ↓
-Core Modules (KER-006 to KER-040)
-  ├→ RGA Module (KER-006 to KER-010)
-  ├→ VV Module (KER-011 to KER-014)
-  ├→ OpLog Module (KER-015 to KER-017)
-  ├→ Membership Module (KER-018 to KER-021)
-  ├→ GC Module (KER-022 to KER-025)
-  └→ Snapshot Module (KER-026 to KER-028)
+Orchestrator (KER-037 to KER-045)
   ↓
-Orchestrator (KER-029 to KER-032)
+Testing Infrastructure (KER-046 to KER-063)
+  ├→ Unit Tests (KER-046 to KER-055)
+  └→ Property-Based Tests (KER-056 to KER-063)
   ↓
-Testing Infrastructure (KER-033 to KER-036)
+Integration Tests (KER-064 to KER-068)
   ↓
-Unit Tests (KER-037 to KER-051)
+Documentation (KER-073 to KER-076)
   ↓
-Property-Based Tests (KER-052 to KER-069)
-  ↓
-Integration Tests (KER-070 to KER-074)
-  ↓
-Documentation (KER-075 to KER-078)
-  ↓
-Transport & Coordinator (KER-079 to KER-085)
+Coordinator Service (KER-077 to KER-078)
   ↓
 Applications (outside kernel scope)
 ```
@@ -323,7 +318,7 @@ Applications (outside kernel scope)
 - [ ] 19. **Membership Updates and Eviction** (KER-019)
   - Implement `addReplica(membership, replicaId)` function: add replica, increment epoch
   - Implement `removeReplica(membership, replicaId)` function: evict replica, increment epoch
-  - Track eviction date and reason (for diagnostics)
+  - Track eviction epoch and reason (for diagnostics; no wall-clock time inside the kernel)
   - **Acceptance Criteria**:
     - Adding/removing replica increments epoch by 1
     - Replica ID added/removed from activeReplicas set

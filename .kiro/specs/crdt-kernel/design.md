@@ -5,7 +5,7 @@
 The CRDT Kernel is a deterministic, pure TypeScript implementation of a Replicated Growable Array (RGA) sequence CRDT designed for offline-first collaborative applications. It manages causal consistency, duplicate suppression, membership-based eviction, and memory-efficient garbage collection through a clean API surface.
 
 **Key Design Principles:**
-- **Pure & Deterministic**: No `logicalIndex`, `Math.random()`, DOM, network, or storage inside `/kernel`
+- **Pure & Deterministic**: No `Date.now()`, `Math.random()`, DOM, network, or storage inside `/kernel`
 - **Correctness-First**: Extensive property-based testing with fast-check; comprehensive unit tests
 - **Memory-Efficient**: Stage 1 GC reclaims payload of causally stable deletes while retaining structural anchors
 - **API Simplicity**: Clean public interface hiding implementation complexity

@@ -52,7 +52,6 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 1. THE Kernel SHALL implement a sequence CRDT following the RGA (Replicated Growable Array) model.
 2. WHEN an insert operation is created at a replica, THE Kernel SHALL assign it a unique Op ID of form `(replicaId, sequence)`.
 3. WHEN an insert is applied, THE Kernel SHALL place it after a specified anchor element or `HEAD` if no anchor is given.
-3.5. WHEN determining insertion order for concurrent inserts at the same anchor, THE Kernel SHALL include tombstones (deleted elements) when scanning through the sequence to find the correct position by Op ID, but THE Kernel SHALL NOT place new elements before or within tombstones. Tombstones maintain their structural position in the sequence for causality tracking, and concurrent inserts are ordered relative to each other by Op ID, not relative to tombstones.
 4. WHEN two concurrent inserts target the same anchor, THE Kernel SHALL resolve ordering using the Op IDs (replica ID, then sequence) to ensure deterministic, consistent placement across all replicas.
 5. WHEN a delete operation is applied, THE Kernel SHALL mark the element as deleted (tombstone) and retain its structural position.
 6. THE Kernel SHALL maintain insertion order visibility to the application. Visible (non-deleted) elements are ordered by their anchor-based placement in the RGA, with concurrent inserts at the same anchor ordered deterministically by Op ID (replicaId first, then sequence). This ensures that all replicas, upon applying the same set of operations in any order, produce identical visible sequences.
@@ -111,7 +110,25 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 4. Contiguous Version Vectors (VV)
+### 4. Tombstone Handling and Concurrent Insert Ordering
+
+**User Story**: As the kernel, I want to handle tombstones correctly during insertion, so that concurrent inserts at the same anchor are ordered deterministically while preserving the structural role of tombstones.
+
+#### Acceptance Criteria
+
+1. WHEN determining insertion order for concurrent inserts at the same anchor, THE Kernel SHALL include tombstones (deleted elements) when scanning through the sequence to find the correct position by Op ID.
+2. THE Kernel SHALL NOT place new elements before or within tombstones.
+3. Tombstones SHALL maintain their structural position in the sequence for causality tracking.
+4. Concurrent inserts at the same anchor SHALL be ordered relative to each other by Op ID, not relative to tombstones.
+
+#### Correctness Properties
+
+- **Tombstone Visibility**: Tombstones are used for structural positioning but do not affect the relative ordering of concurrent inserts.
+- **Deterministic Placement**: Concurrent inserts at the same anchor are always ordered the same way across all replicas, based on Op ID ordering.
+
+---
+
+### 5. Contiguous Version Vectors (VV)
 
 **User Story**: As the kernel, I want to track which operations from each replica have been causally delivered, so that I can compute a stable frontier and authorize garbage collection.
 
@@ -138,7 +155,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 5. Missing-Operation Exchange and Dependency Buffering
+### 6. Missing-Operation Exchange and Dependency Buffering
 
 **User Story**: As a replica, I want to exchange missing operations with other replicas and buffer out-of-order operations, so that I can converge to the correct state even under network delays and reordering.
 
@@ -160,7 +177,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 6. Duplicate Suppression
+### 7. Duplicate Suppression
 
 **User Story**: As the kernel, I want to suppress duplicate operations, so that network retransmissions and redelivery do not cause data corruption or duplicate entries.
 
@@ -179,7 +196,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 7. Deterministic Simulated Network
+### 8. Deterministic Simulated Network
 
 **User Story**: As a test, I want a deterministic, controllable network simulation, so that I can reproduce network behavior and verify the kernel converges under all conditions.
 
@@ -200,7 +217,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 8. Membership Epochs
+### 9. Membership Epochs
 
 **User Story**: As the kernel, I want to track membership changes and assign them epoch numbers, so that I can fence stale peers and safely authorize garbage collection.
 
@@ -223,7 +240,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 9. Zombie Eviction
+### 10. Zombie Eviction
 
 **User Story**: As the coordinator, I want to evict offline replicas from the membership, so that the stable frontier can advance and garbage collection can proceed.
 
@@ -250,7 +267,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 10. Stale-Peer Fencing
+### 11. Stale-Peer Fencing
 
 **User Story**: As the kernel, I want to reject operations from evicted or stale-epoch peers, so that evicted replicas cannot corrupt the state or block garbage collection.
 
@@ -272,7 +289,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 11. Stable Frontier Computation
+### 12. Stable Frontier Computation
 
 **User Story**: As the coordinator, I want to compute the stable frontier from acknowledged Version Vectors, so that I can determine which operations are causally stable and safe for garbage collection.
 
@@ -295,7 +312,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 12. Stage 1 Garbage Collection (Payload Reclamation)
+### 13. Stage 1 Garbage Collection (Payload Reclamation)
 
 **User Story**: As the kernel, I want to reclaim the payload of deleted elements once they are causally stable, so that memory usage grows sub-linearly with the document lifetime, not linearly with the number of deletes.
 
@@ -319,7 +336,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 13. Snapshots and Snapshot Rejoin
+### 14. Snapshots and Snapshot Rejoin
 
 **User Story**: As a replica, I want to take a snapshot of the current state and use it to bootstrap a new or returning replica, so that new replicas do not need to replay the entire operation history.
 
@@ -349,7 +366,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 14. Property-Based Tests (PBT) with fast-check
+### 15. Property-Based Tests (PBT) with fast-check
 
 **User Story**: As a developer, I want to verify the kernel's correctness with property-based tests, so that edge cases, race conditions, and uncommon orderings are thoroughly tested automatically.
 
@@ -381,7 +398,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 15. Unit Tests and Test Coverage
+### 16. Unit Tests and Test Coverage
 
 **User Story**: As a developer, I want every kernel module to have comprehensive unit tests, so that regressions are caught early and integration is straightforward.
 
@@ -408,7 +425,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 16. API Surface and Integration Points
+### 17. API Surface and Integration Points
 
 **User Story**: As an application developer (building Graveyard Whiteboard or Cursed Checklist), I want a clean, simple API to interact with the kernel, so that I can create operations, listen for state changes, and query the sequence without coupling to internal details.
 
@@ -443,7 +460,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 17. Documentation and Code Comments
+### 18. Documentation and Code Comments
 
 **User Story**: As a developer reading the kernel code, I want clear documentation and comments, so that I understand the design intent and can maintain or extend the code.
 
