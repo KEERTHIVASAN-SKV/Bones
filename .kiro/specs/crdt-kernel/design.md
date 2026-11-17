@@ -19,13 +19,14 @@ The CRDT Kernel is composed of seven core modules that work together to provide 
 
 ### Module Overview
 
-1. **RGA Module**: Maintains the replicated growable array data structure, handling insert/delete operations and deterministic conflict resolution through Op ID ordering
-2. **VersionVector (VV) Module**: Tracks causal dependencies using contiguous Version Vectors; enables dependency detection and stable frontier computation
-3. **OpLog Module**: Maintains an append-only log of operations; supports deduplication and per-replica querying
-4. **Membership Module**: Manages active replica sets and membership epochs; enables membership-based eviction and fencing of stale operations
-5. **Garbage Collector (GC) Module**: Performs Stage 1 payload reclamation for deleted elements that are causally stable; preserves structural anchors
-6. **Snapshot Module**: Serializes and deserializes kernel state; enables rejoin-from-snapshot workflows
-7. **CRDT Coordinator Class**: Orchestrates all modules; provides public API; emits events for application integration
+1. **Lamport Clock Module**: Tracks logical time for each replica; each op carries a Lamport timestamp computed as `max(local_clock, received_max) + 1`.
+2. **RGA Module**: Maintains the replicated growable array data structure, handling insert/delete operations and deterministic conflict resolution through `(lamport, replicaId)` ordering.
+3. **VersionVector (VV) Module**: Tracks causal dependencies using contiguous Version Vectors; enables dependency detection and stable frontier computation.
+4. **OpLog Module**: Maintains an append-only log of operations; supports deduplication and per-replica querying.
+5. **Membership Module**: Manages active replica sets and membership epochs with eviction cutoffs; enables membership-based fencing and safe garbage collection.
+6. **Garbage Collector (GC) Module**: Performs Stage 1 payload reclamation for deleted elements based on the stable frontier; preserves structural anchors.
+7. **Snapshot Module**: Serializes and deserializes kernel state; enables rejoin-from-snapshot workflows.
+8. **CRDT Coordinator Class**: Orchestrates all modules; provides public API; emits events for application integration; manages operation buffering and dependency resolution.
 
 ### Module Interactions
 
@@ -136,12 +137,13 @@ function compareOpIds(a: OpId, b: OpId): number {
 
 ```typescript
 interface Element<T = any> {
-  id: OpId;                  // Unique identifier of this element
-  value?: T;                 // Payload data (null/undefined if deleted)
-  deleted: boolean;          // True if marked as deleted (tombstone)
-  deletedAt?: OpId;          // Op ID of the delete operation (if deleted)
-  payloadReclaimed: boolean; // True if payload was GC'd (retained anchor)
-  epoch?: number;            // Epoch when this element was created/deleted
+  id: `${string}:${number}`;    // Key in format "${replicaId}:${seq}"; globally unique identifier
+  value?: T;                     // Payload data (null/undefined if deleted)
+  deleted: boolean;              // True if marked as deleted (tombstone)
+  deletedAt?: `${string}:${number}`;  // Key of delete operation (if deleted)
+  lamport: number;               // Lamport clock of this element
+  payloadReclaimed: boolean;      // True if payload was GC'd (retained anchor)
+  epoch?: number;                // Epoch when this element was created/deleted
 }
 ```
 
@@ -159,11 +161,11 @@ interface Operation<T = any> {
   type: OperationType;
   replicaId: string;          // Replica that created this op
   seq: number;                // Sequence number (part of Op ID)
+  lamport: number;            // Lamport clock timestamp
   value?: T;                  // Payload (for inserts)
-  anchorId?: OpId;            // Element after which to insert (undefined = HEAD)
-  elementId?: OpId;           // Element to delete (for delete ops)
-  epoch?: number;             // Membership epoch when created (for fencing)
-  timestamp?: number;         // Logical timestamp (optional, for reference)
+  anchorId?: `${string}:${number}`;  // Key of element after which to insert (undefined = HEAD); format "${replicaId}:${seq}"
+  elementId?: `${string}:${number}`;  // Key of element to delete; format "${replicaId}:${seq}"
+  epoch?: number;             // Membership epoch when created
 }
 
 // Computed Op ID
@@ -246,8 +248,8 @@ interface SnapshotMetadata {
 ```typescript
 // Used to buffer out-of-order operations until dependencies are available
 interface OperationBuffer {
-  buffer: Map<string, Map<number, Operation>>;  // replicaId -> (seq -> Op)
-  missingOps: Map<string, Set<number>>;         // replicaId -> set of missing seqs
+  buffer: Map<string, Map<number, Operation>>;  // Key: "${replicaId}:${seq}" -> Op
+  missingOps: Map<string, Set<number>>;         // Key: replicaId -> set of missing seqs
 }
 
 // Check if dependencies are satisfied
@@ -300,55 +302,66 @@ function areDependenciesSatisfied(op: Operation, vv: VersionVector): boolean {
 
 ### Algorithm 1: Insert Operation
 
-**Input**: `replicaId`, `anchorId` (optional), `value`
+**Input**: `replicaId`, `anchorId` (optional, format "${replicaId}:${seq}" or undefined for HEAD), `value`, `localClock`, `currentSeq`, `currentEpoch`
 **Output**: `Operation` (to be applied locally and broadcast)
-**Side Effects**: Increments replica's sequence number
+**Side Effects**: Increments replica's sequence number and Lamport clock
 
 ```typescript
 function insert<T>(
   replicaId: string,
-  anchorId: OpId | undefined,
+  anchorId: string | undefined,  // Key format: "${replicaId}:${seq}" or undefined for HEAD
   value: T,
-  currentSeq: number,  // Current sequence for this replica
+  localClock: number,            // Current Lamport clock for this replica
+  currentSeq: number,            // Current sequence for this replica
   currentEpoch: number
-): Operation<T> {
+): { operation: Operation<T>; newLamport: number } {
   const newSeq = currentSeq + 1;
+  const newLamport = localClock + 1;
   const op: Operation<T> = {
     type: 'insert',
     replicaId,
     seq: newSeq,
+    lamport: newLamport,
     value,
     anchorId,
     epoch: currentEpoch,
   };
-  return op;
+  return { operation: op, newLamport };
 }
 
 // Application (local or remote):
 function applyInsert(
   rga: Element[],
   op: Operation,
-  opIndex: Map<OpId, number>  // Maps OpId to index in RGA
-): { rga: Element[]; changed: boolean } {
+  opIndex: Map<string, number>,  // Key: "${replicaId}:${seq}" -> index in RGA
+  localClock: number             // Current Lamport clock at receiver
+): { rga: Element[]; changed: boolean; newLamport: number } {
+  // Update local clock
+  const newLamport = Math.max(localClock, op.lamport);
+  
+  const elementKey = `${op.replicaId}:${op.seq}`;
   const newElement: Element = {
-    id: { replicaId: op.replicaId, seq: op.seq },
+    id: elementKey,
     value: op.value,
     deleted: false,
+    lamport: op.lamport,
+    payloadReclaimed: false,
     epoch: op.epoch,
   };
 
   // Find anchor position (or start if no anchor)
   let insertAt = 0;
   if (op.anchorId) {
-    insertAt = (opIndex.get(op.anchorId) ?? -1) + 1;
+    const anchorIndex = opIndex.get(op.anchorId);
+    insertAt = (anchorIndex ?? -1) + 1;
   }
 
-  // Find correct position by sorting concurrent inserts by Op ID
-  // Scan includes tombstones; insertion proceeds until Op ID is >= current element.
+  // Find correct position by sorting concurrent inserts by (lamport, replicaId)
+  // Scan includes tombstones; insertion proceeds until key(seq[pos]) > key(newElement).
   // Tombstones are structural anchors and are traversed during position calculation.
   while (
     insertAt < rga.length &&
-    compareOpIds(rga[insertAt].id, newElement.id) < 0
+    compareKeys(rga[insertAt].lamport, rga[insertAt].id, op.lamport, elementKey) < 0
   ) {
     insertAt++;
   }
@@ -357,62 +370,78 @@ function applyInsert(
   rga.splice(insertAt, 0, newElement);
   updateOpIndex(opIndex, rga);
 
-  return { rga, changed: true };
+  return { rga, changed: true, newLamport };
+}
+
+// Compare by (lamport, replicaId) key
+function compareKeys(lamport1: number, id1: string, lamport2: number, id2: string): number {
+  if (lamport1 !== lamport2) return lamport1 < lamport2 ? -1 : 1;
+  // Extract replicaId from id (format: "${replicaId}:${seq}")
+  const rid1 = id1.substring(0, id1.lastIndexOf(':'));
+  const rid2 = id2.substring(0, id2.lastIndexOf(':'));
+  return rid1 < rid2 ? -1 : rid1 > rid2 ? 1 : 0;  // code-unit comparison, no localeCompare
 }
 ```
 
 **Complexity**: O(n) where n is sequence length (scan for anchor + sort position)
 
-**Correctness**: Two concurrent inserts with the same anchor are ordered deterministically by Op ID, ensuring eventual consistency.
+**Correctness**: Concurrent inserts with the same anchor are ordered deterministically by `(lamport, replicaId)`, ensuring eventual consistency and a local insert at visible index k lands at visible index k after convergence.
 
 ---
 
 ### Algorithm 2: Delete Operation
 
-**Input**: `replicaId`, `elementId` (Op ID of element to delete), current epoch
+**Input**: `replicaId`, `elementId` (element key in format "${replicaId}:${seq}"), `currentSeq`, `currentEpoch`, `localClock`
 **Output**: `Operation` with type 'delete'
 
 ```typescript
 function delete_(
   replicaId: string,
-  elementId: OpId,
+  elementId: string,           // Key format: "${replicaId}:${seq}"
   currentSeq: number,
-  currentEpoch: number
-): Operation {
+  currentEpoch: number,
+  localClock: number           // Current Lamport clock
+): { operation: Operation; newLamport: number } {
   const newSeq = currentSeq + 1;
+  const newLamport = localClock + 1;
   const op: Operation = {
     type: 'delete',
     replicaId,
     seq: newSeq,
+    lamport: newLamport,
     elementId,
     epoch: currentEpoch,
   };
-  return op;
+  return { operation: op, newLamport };
 }
 
 // Application:
 function applyDelete(
   rga: Element[],
   op: Operation,
-  opIndex: Map<OpId, number>
-): { rga: Element[]; changed: boolean } {
+  opIndex: Map<string, number>,  // Key: "${replicaId}:${seq}" -> index
+  localClock: number             // Current Lamport clock at receiver
+): { rga: Element[]; changed: boolean; newLamport: number } {
+  // Update local clock
+  const newLamport = Math.max(localClock, op.lamport);
+  
   const idx = opIndex.get(op.elementId!);
   if (idx === undefined) {
-    // Element not found; silently skip (may arrive before element creation)
-    return { rga, changed: false };
+    // Element not found; buffer this delete until element is applied
+    return { rga, changed: false, newLamport };
   }
 
   const element = rga[idx];
   if (element.deleted) {
     // Already deleted; idempotent
-    return { rga, changed: false };
+    return { rga, changed: false, newLamport };
   }
 
   // Mark as deleted (tombstone), retain structural position
   element.deleted = true;
-  element.deletedAt = { replicaId: op.replicaId, seq: op.seq };
+  element.deletedAt = `${op.replicaId}:${op.seq}`;
 
-  return { rga, changed: true };
+  return { rga, changed: true, newLamport };
 }
 ```
 
@@ -424,7 +453,7 @@ function applyDelete(
 
 ### Algorithm 3: Apply Remote Operation (with Dependency Buffering)
 
-**Input**: `op` (remote operation), `currentVV`, `buffer`, `membershipView`, `opEpoch`
+**Input**: `op` (remote operation), `currentVV`, `buffer`, `membershipView`, `cutoffs`, `rga`, `opIndex`, `appliedOps`
 **Output**: Updated state and/or buffered operations
 
 ```typescript
@@ -433,63 +462,97 @@ function applyOp(
   currentVV: VersionVector,
   buffer: OperationBuffer,
   membershipView: MembershipView,
-  appliedOps: Map<OpId, boolean>
+  cutoffs: Map<string, number>,           // cutoff[replicaId] for evicted replicas
+  rga: Element[],
+  opIndex: Map<string, number>,           // Key: "${replicaId}:${seq}" -> index
+  appliedOps: Map<string, boolean>        // Key: "${replicaId}:${seq}"
 ): {
   applied: boolean;
   buffered: boolean;
   fenced: boolean;
   unblocked: Operation[];
 } {
-  const opId = { replicaId: op.replicaId, seq: op.seq };
+  const opKey = `${op.replicaId}:${op.seq}`;
 
-  // 1. Fencing: Check epoch and membership
-  if (op.epoch !== undefined && op.epoch < membershipView.epoch) {
-    // Stale epoch; reject silently
-    return { applied: false, buffered: false, fenced: true, unblocked: [] };
-  }
-
-  if (!membershipView.activeReplicas.has(op.replicaId)) {
-    // Replica not in active membership; reject
-    return { applied: false, buffered: false, fenced: true, unblocked: [] };
+  // 1. Fencing: Judge by AUTHOR, not by epoch
+  const isAuthorActive = membershipView.activeReplicas.has(op.replicaId);
+  const isAuthorEvicted = !isAuthorActive;
+  if (isAuthorEvicted) {
+    const cutoff = cutoffs.get(op.replicaId) ?? 0;
+    if (op.seq > cutoff) {
+      // Evicted replica's op beyond cutoff; reject
+      return { applied: false, buffered: false, fenced: true, unblocked: [] };
+    }
   }
 
   // 2. Deduplication
-  if (appliedOps.has(opId)) {
+  if (appliedOps.has(opKey)) {
     // Already applied; idempotent suppression
     return { applied: false, buffered: false, fenced: false, unblocked: [] };
   }
 
-  // 3. Contiguity check
+  // 3. Dependency checks
   const contiguousSeq = currentVV.get(op.replicaId) ?? 0;
   if (op.seq > contiguousSeq + 1) {
     // Out of order; buffer it
     bufferOp(buffer, op);
-    recordMissingOps(buffer, op.replicaId, contiguousSeq + 1, op.seq - 1);
     return { applied: false, buffered: true, fenced: false, unblocked: [] };
   }
 
-  // 4. Apply operation (code elided for brevity; calls applyInsert or applyDelete)
-  const { rga, changed } = applyOpToRga(op);
-  appliedOps.set(opId, true);
-  const newVV = advanceVV(currentVV, op.replicaId, op.seq);
-
-  // 5. Unblock buffered operations
-  const unblocked: Operation[] = [];
-  let nextSeq = op.seq + 1;
-  while (hasBufferedOp(buffer, op.replicaId, nextSeq)) {
-    const bufferedOp = getBufferedOp(buffer, op.replicaId, nextSeq);
-    unblocked.push(bufferedOp);
-    removeBufferedOp(buffer, op.replicaId, nextSeq);
-    nextSeq++;
+  // For INSERT: anchor must be HEAD or already applied
+  if (op.type === 'insert' && op.anchorId) {
+    if (!opIndex.has(op.anchorId)) {
+      // Anchor not applied yet; buffer this insert
+      bufferOp(buffer, op);
+      return { applied: false, buffered: true, fenced: false, unblocked: [] };
+    }
   }
 
-  return { applied: true, buffered: false, fenced: false, unblocked };
+  // For DELETE: target element must be already applied
+  if (op.type === 'delete') {
+    if (!opIndex.has(op.elementId!)) {
+      // Target not applied yet; buffer this delete
+      bufferOp(buffer, op);
+      return { applied: false, buffered: true, fenced: false, unblocked: [] };
+    }
+  }
+
+  // 4. Apply operation
+  let changed = false;
+  if (op.type === 'insert') {
+    const result = applyInsert(rga, op, opIndex, 0);  // localClock updated separately
+    changed = result.changed;
+  } else if (op.type === 'delete') {
+    const result = applyDelete(rga, op, opIndex, 0);
+    changed = result.changed;
+  }
+
+  if (changed) {
+    appliedOps.set(opKey, true);
+    advanceVV(currentVV, op.replicaId, op.seq);
+  }
+
+  // 5. Unblock buffered operations (re-check all buffered ops)
+  const unblocked: Operation[] = [];
+  const toRetry = Array.from(buffer.buffer.values()).flatMap(m => Array.from(m.values()));
+  for (const bufferedOp of toRetry) {
+    if (!appliedOps.has(`${bufferedOp.replicaId}:${bufferedOp.seq}`)) {
+      // Try to apply this buffered op recursively
+      const result = applyOp(bufferedOp, currentVV, buffer, membershipView, cutoffs, rga, opIndex, appliedOps);
+      if (result.applied) {
+        unblocked.push(bufferedOp);
+        removeBufferedOp(buffer, bufferedOp.replicaId, bufferedOp.seq);
+      }
+    }
+  }
+
+  return { applied: changed, buffered: false, fenced: false, unblocked };
 }
 ```
 
-**Complexity**: O(1) for buffering decision; O(b) to unblock buffered ops (b = number of buffered ops)
+**Complexity**: O(1) for buffering decision; O(b * d) to unblock buffered ops (b = buffered ops, d = dep checks per op)
 
-**Correctness**: Out-of-order operations are buffered; causality is never violated.
+**Correctness**: Operations with missing dependencies (contiguous seq, anchor, or target) are never dropped; they remain in buffer until all dependencies are satisfied.
 
 ---
 
@@ -525,7 +588,7 @@ function updateVVWithContiguousPrefixRule(
 ### Algorithm 5: Stable Frontier Computation
 
 **Input**: Acknowledged VVs from all active replicas
-**Output**: Stable Frontier (component-wise minimum)
+**Output**: Stable Frontier (component-wise minimum over active members)
 
 ```typescript
 function computeStableFrontier(
@@ -534,30 +597,39 @@ function computeStableFrontier(
 ): VersionVector {
   const frontier = new Map<string, number>();
 
-  for (const replicaId of activeReplicas) {
-    const vv = acknowledgedVVs.get(replicaId);
-    if (vv === undefined) {
-      // Replica hasn't acked; frontier entry is 0 (no ops stable from that replica yet)
-      frontier.set(replicaId, 0);
-    } else {
-      frontier.set(replicaId, vv.get(replicaId) ?? 0);
+  // Collect all replica IDs that appear in any acknowledgment
+  const allReplicaIds = new Set<string>();
+  for (const vv of acknowledgedVVs.values()) {
+    for (const rid of vv.keys()) {
+      allReplicaIds.add(rid);
     }
   }
 
-  // Component-wise minimum (only among active replicas)
-  let minSeq = Infinity;
-  for (const seq of frontier.values()) {
-    minSeq = Math.min(minSeq, seq);
+  // Compute frontier[r] = min over active members m of ack_m[r]
+  for (const replicaId of allReplicaIds) {
+    let minSeq = Infinity;
+    for (const activeMember of activeReplicas) {
+      const vv = acknowledgedVVs.get(activeMember);
+      const seq = vv ? (vv.get(replicaId) ?? 0) : 0;
+      minSeq = Math.min(minSeq, seq);
+    }
+    if (minSeq !== Infinity) {
+      frontier.set(replicaId, minSeq);
+    }
   }
 
   return frontier;
 }
 
-function isCausallyStable(opId: OpId, stableFrontier: VersionVector): boolean {
-  return (stableFrontier.get(opId.replicaId) ?? 0) >= opId.seq;
+function isCausallyStable(opId: string, stableFrontier: VersionVector): boolean {
+  // opId format: "${replicaId}:${seq}"
+  const [replicaId, seqStr] = opId.split(':');
+  const seq = parseInt(seqStr, 10);
+  return (stableFrontier.get(replicaId) ?? 0) >= seq;
 }
 ```
 
+**Correctness**: Frontier = component-wise minimum over ALL active members for EVERY replicaId in any ack.
 **Monotonicity**: Frontier only advances or stays the same (never regresses).
 **Safety**: An operation is causally stable only if all active replicas have applied it.
 
@@ -572,39 +644,54 @@ function isCausallyStable(opId: OpId, stableFrontier: VersionVector): boolean {
 function performStage1GC(
   rga: Element[],
   stableFrontier: VersionVector,
+  deleteOpsPerElement: Map<string, Set<string>>,  // elementKey -> set of deleteOpKeys
   gcStats: GCStats
 ): { rga: Element[]; bytesReclaimed: number } {
   let bytesReclaimed = 0;
 
   for (const element of rga) {
     // Only reclaim deleted elements that are causally stable
-    if (
-      element.deleted &&
-      !element.payloadReclaimed &&
-      isCausallyStable(element.deletedAt!, stableFrontier)
-    ) {
-      const payloadSize = estimatePayloadSize(element.value);
-      element.value = undefined;
-      element.payloadReclaimed = true;
-      bytesReclaimed += payloadSize;
-      gcStats.bytesReclaimed += bytesReclaimed;
-      gcStats.tombstonesRetained += 1;
+    if (element.deleted && !element.payloadReclaimed) {
+      const deleteOps = deleteOpsPerElement.get(element.id) || new Set();
+      let isReclaimable = false;
+      
+      // Payload is reclaimable if ANY delete op D targeting it satisfies D.seq <= Frontier[D.replica]
+      for (const deleteOpKey of deleteOps) {
+        if (isCausallyStable(deleteOpKey, stableFrontier)) {
+          isReclaimable = true;
+          break;
+        }
+      }
+      
+      if (isReclaimable) {
+        const payloadSize = estimatePayloadSize(element.value);
+        element.value = undefined;
+        element.payloadReclaimed = true;
+        bytesReclaimed += payloadSize;
+        // FIX: Add bytes reclaimed only once per element, not in accumulation
+      }
     }
   }
+
+  gcStats.bytesReclaimed += bytesReclaimed;
+  gcStats.tombstonesRetained = rga.filter(e => e.deleted && e.payloadReclaimed).length;
 
   return { rga, bytesReclaimed };
 }
 
 function estimatePayloadSize(value: any): number {
   // Rough estimation; in production, use actual serialization size
+  if (value === undefined || value === null) return 0;
   return JSON.stringify(value).length;
 }
 ```
 
-**Complexity**: O(n) where n is sequence length (scan all elements)
+**Complexity**: O(n * d) where n is sequence length and d is average delete ops per element
 
 **Correctness**: 
 - Reclaimed payloads are never accessed again (retained anchor has no value)
+- Payload is reclaimable if ANY delete op is at or below frontier
+- Bytes reclaimed is added once per element, not accumulated
 - Structural integrity is preserved (anchor position unchanged)
 - Non-breaking for applications (invisible change)
 
@@ -612,7 +699,7 @@ function estimatePayloadSize(value: any): number {
 
 ### Algorithm 7: Snapshot Creation
 
-**Input**: Current RGA, VV, membership, epoch
+**Input**: Current RGA, VV, membership, replicaId, local clock
 **Output**: Serializable snapshot
 
 ```typescript
@@ -620,12 +707,13 @@ function createSnapshot<T>(
   rga: Element<T>[],
   vv: VersionVector,
   membership: MembershipView,
-  gcStats: GCStats
+  gcStats: GCStats,
+  replicaId: string,
+  localClock: number
 ): Snapshot<T> {
   // Deep copy RGA to avoid external mutations
   const sequenceCopy = rga.map((elem) => ({
     ...elem,
-    id: { ...elem.id },
   }));
 
   // Copy VV
@@ -642,15 +730,15 @@ function createSnapshot<T>(
     vv: vvCopy,
     membership: membershipCopy,
     metadata: {
-      creator: "replicaId",
-      logicalIndex: rga.length,  // Derived from kernel state; number of applied operations
+      creator: replicaId,
+      logicalIndex: localClock,  // Lamport clock at snapshot time, not wall-clock timestamp
       gcStats,
     },
   };
 }
 ```
 
-**Determinism**: Deep copies ensure no shared mutable references.
+**Determinism**: Deep copies ensure no shared mutable references. Metadata uses logical index (Lamport clock), not wall-clock time.
 
 ---
 

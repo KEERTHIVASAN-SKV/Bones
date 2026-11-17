@@ -353,9 +353,23 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-018
   - **Validation**: Unit test: serialize/deserialize → verify identical
 
+- [ ] 23. **Eviction Barrier and Cutoff Tracking** (KER-022)
+  - Implement `cutoffs: Map<replicaId, seq>` to track eviction cutoff for each evicted replica
+  - Implement `recordCutoff(replicaId, cutoffSeq)` function: record max applied seq before eviction
+  - Implement `isBeyondCutoff(replicaId, seq)` function: check if op seq > cutoff[replicaId]
+  - Fencing rule: accept op if author is active OR (author is evicted AND seq <= cutoff[author])
+  - **Acceptance Criteria**:
+    - Cutoff is recorded when replica is evicted
+    - Operations from evicted replicas beyond cutoff are rejected
+    - Operations from evicted replicas at or below cutoff are applied
+  - **Effort**: Small
+  - **Priority**: MUST
+  - **Dependencies**: KER-021
+  - **Validation**: Unit test: evict replica → record cutoff → verify ops are fenced correctly
+
 #### Garbage Collector Module
 
-- [ ] 22. **Stage 1 GC Logic (Payload Reclamation)** (KER-022)
+- [ ] 24. **Stage 1 GC Logic (Payload Reclamation)** (KER-023)
   - Create `src/gc.ts` with:
     - `performStage1GC(rga, stableFrontier)` function: identify reclaimable payloads
     - Mark payloads as reclaimed (set value to undefined, set `payloadReclaimed = true`)
@@ -371,7 +385,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-007, KER-010
   - **Validation**: Unit test: GC with frontier → verify payloads reclaimed; verify sequence unchanged
 
-- [ ] 23. **Stable Frontier Computation** (KER-023)
+- [ ] 25. **Stable Frontier Computation** (KER-024)
   - Implement `computeStableFrontier(acknowledgedVVs, activeReplicas)` function: component-wise minimum
   - Only consider active replicas in minimum
   - Handle missing VVs (treat as 0)
@@ -384,7 +398,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-011, KER-018
   - **Validation**: Unit test: compute frontier with 3 replicas → verify minimum
 
-- [ ] 24. **Causally Stable Operation Identification** (KER-024)
+- [ ] 26. **Causally Stable Operation Identification** (KER-025)
   - Implement `isCausallyStable(opId, stableFrontier)` function: check if op ≤ frontier
   - **Acceptance Criteria**:
     - Op at or below frontier is stable
@@ -395,7 +409,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-023
   - **Validation**: Unit test: op at various positions relative to frontier
 
-- [ ] 25. **GC Statistics and Diagnostics** (KER-025)
+- [ ] 27. **GC Statistics and Diagnostics** (KER-026)
   - Implement `getGCStats(rga)` function: return:
     - `bytesReclaimed`: total bytes cleared via GC
     - `tombstonesRetained`: count of retained anchors
@@ -412,7 +426,7 @@ Applications (outside kernel scope)
 
 #### Snapshot Module
 
-- [ ] 26. **Snapshot Creation** (KER-026)
+- [ ] 28. **Snapshot Creation** (KER-027)
   - Create `src/snapshot.ts` with:
     - `createSnapshot(rga, vv, membership, gcStats)` function
     - Include deep copies of sequence, VV, membership
@@ -428,7 +442,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-010, KER-011, KER-018, KER-025
   - **Validation**: Unit test: create snapshot → verify all fields present; verify no Date.now() calls; mutate original → verify snapshot unchanged
 
-- [ ] 27. **Snapshot Serialization** (KER-027)
+- [ ] 29. **Snapshot Serialization** (KER-028)
   - Implement `serializeSnapshot(snapshot)` function: JSON serialization with sorted keys
   - Implement `deserializeSnapshot(json)` function: parse and reconstruct
   - Ensure deterministic serialization
@@ -441,7 +455,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-026
   - **Validation**: Unit test: serialize → deserialize → verify identical
 
-- [ ] 28. **Snapshot Rejoin and State Recovery** (KER-028)
+- [ ] 30. **Snapshot Rejoin and State Recovery** (KER-029)
   - Implement `rejoinFromSnapshot(snapshot, postSnapshotOps)` function
   - Initialize RGA, VV, membership from snapshot
   - Apply post-snapshot ops with deduplication and causal ordering
@@ -459,7 +473,7 @@ Applications (outside kernel scope)
 
 ### Phase 3: CRDT Orchestrator
 
-- [ ] 29. **CRDT Class Initialization and State Management** (KER-029)
+- [ ] 31. **CRDT Class Initialization and State Management** (KER-030)
   - Create `src/crdt.ts` with main CRDT class
   - Initialize RGA, VV, OpLog, Membership, GC state
   - Track current sequence number for this replica
@@ -473,7 +487,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-006, KER-011, KER-015, KER-018, KER-028
   - **Validation**: Unit test: create CRDT → verify initial state
 
-- [ ] 30. **CRDT Core API (insert, delete, applyOp)** (KER-030)
+- [ ] 32. **CRDT Core API (insert, delete, applyOp)** (KER-031)
   - Implement public methods:
     - `insert(anchorId, value)` → Operation
     - `delete(elementId)` → Operation
@@ -490,7 +504,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-006, KER-007, KER-013, KER-020
   - **Validation**: Unit test: insert/delete/applyOp with various scenarios; verify state consistency
 
-- [ ] 31. **CRDT Query Methods** (KER-031)
+- [ ] 33. **CRDT Query Methods** (KER-032)
   - Implement public methods:
     - `getSequence()` → Element[]
     - `getVV()` → VersionVector
@@ -509,7 +523,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-030
   - **Validation**: Unit test: insert/delete → query → verify accuracy
 
-- [ ] 32. **CRDT Events and Membership Updates** (KER-032)
+- [ ] 34. **CRDT Events and Membership Updates** (KER-033)
   - Implement event system:
     - `on(event, callback)`: register listener
     - `off(event, callback)`: unregister listener
@@ -533,7 +547,7 @@ Applications (outside kernel scope)
 
 ### Phase 4: Testing Infrastructure
 
-- [ ] 33. **Deterministic Network Simulator** (KER-033)
+- [ ] 35. **Deterministic Network Simulator** (KER-034)
   - Create `src/testing/deterministicNetwork.ts` with:
     - `DeterministicNetworkSimulator` class
     - Seed-based pseudo-random message ordering
@@ -549,7 +563,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-002
   - **Validation**: Unit test: run simulator twice with same seed → verify identical sequences
 
-- [ ] 34. **fast-check Arbitraries for CRDT Types** (KER-034)
+- [ ] 36. **fast-check Arbitraries for CRDT Types** (KER-035)
   - Create `src/testing/arbitraries.ts` with generators for:
     - Operations (insert, delete with various anchors)
     - Multi-replica scenarios
@@ -566,7 +580,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-003
   - **Validation**: Unit test: generate 100+ random cases → verify coverage of scenarios
 
-- [ ] 35. **Test Fixtures and Helpers** (KER-035)
+- [ ] 37. **Test Fixtures and Helpers** (KER-036)
   - Create `src/testing/fixtures.ts` with:
     - Preset multi-replica scenarios (2, 3+ replicas)
     - Common operation sequences
@@ -580,7 +594,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-029
   - **Validation**: Use fixtures in integration tests (KER-070+)
 
-- [ ] 36. **Test Data Builders and Factories** (KER-036)
+- [ ] 38. **Test Data Builders and Factories** (KER-037)
   - Create helper functions to build:
     - Operations with specific properties (replicaId, seq, anchor, etc.)
     - RGA states with specific sequences
@@ -599,7 +613,7 @@ Applications (outside kernel scope)
 
 ### Phase 5: Unit Tests
 
-- [ ] 37. **RGA Unit Tests** (KER-037)
+- [ ] 39. **RGA Unit Tests** (KER-038)
   - Test insert, delete, getSequence for all scenarios:
     - Empty RGA
     - Single element
@@ -617,7 +631,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-010, KER-036
   - **Validation**: Run tests; verify coverage > 90%
 
-- [ ] 38. **VersionVector Unit Tests** (KER-038)
+- [ ] 40. **VersionVector Unit Tests** (KER-40)
   - Test createVV, cloneVV, mergeVV, advanceVV
   - Test partial order (isVVLessOrEqual)
   - Test contiguity enforcement
@@ -632,7 +646,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-014, KER-036
   - **Validation**: Run tests; verify coverage > 90%
 
-- [ ] 39. **OpLog and Membership Unit Tests** (KER-039)
+- [ ] 41. **OpLog and Membership Unit Tests** (KER-41)
   - Test OpLog append, dedup, query
   - Test replay determinism
   - Test Membership create, update, eviction
@@ -646,7 +660,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-016, KER-021, KER-036
   - **Validation**: Run tests; verify coverage > 90%
 
-- [ ] 40. **GC and Snapshot Unit Tests** (KER-040)
+- [ ] 42. **GC and Snapshot Unit Tests** (KER-42)
   - Test Stage 1 GC payload reclamation
   - Test stable frontier computation
   - Test causal stability check
@@ -661,7 +675,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-025, KER-027, KER-036
   - **Validation**: Run tests; verify coverage > 90%
 
-- [ ] 41. **CRDT Class Unit Tests (Part 1: Basics)** (KER-041)
+- [ ] 43. **CRDT Class Unit Tests (Part 1: Basics)** (KER-43)
   - Test CRDT initialization
   - Test insert and delete operations
   - Test basic applyOp with simple scenarios
@@ -675,7 +689,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-032, KER-036
   - **Validation**: Run tests; verify state consistency
 
-- [ ] 42. **CRDT Class Unit Tests (Part 2: Advanced)** (KER-042)
+- [ ] 44. **CRDT Class Unit Tests (Part 2: Advanced)** (KER-44)
   - Test applyOp with out-of-order operations
   - Test dependency buffering and unblocking
   - Test duplicate suppression
@@ -691,7 +705,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-041, KER-032
   - **Validation**: Run tests; verify all scenarios
 
-- [ ] 43. **Boundary and Edge Case Tests** (KER-043)
+- [ ] 45. **Boundary and Edge Case Tests** (KER-45)
   - Test with empty sequences
   - Test with single elements
   - Test with large sequences (1000+ elements)
@@ -706,7 +720,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-041, KER-042
   - **Validation**: Run edge case tests; verify no crashes
 
-- [ ] 44. **Error Recovery and Graceful Degradation** (KER-044)
+- [ ] 46. **Error Recovery and Graceful Degradation** (KER-46)
   - Test handling of invalid inputs
   - Test behavior on network partition (buffering continues)
   - Test behavior on evicted replica
@@ -720,7 +734,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-042
   - **Validation**: Run error tests; verify graceful handling
 
-- [ ] 45. **Determinism Verification Tests** (KER-045)
+- [ ] 47. **Determinism Verification Tests** (KER-47)
   - Test that same seed produces identical results
   - Test serialization/deserialization round-trips
   - Test operation replay determinism
@@ -736,7 +750,7 @@ Applications (outside kernel scope)
 
 ### Phase 6: Property-Based Tests (18 correctness properties)
 
-- [ ] 46. **PBT - RGA Convergence (Property 1)** (KER-046)
+- [ ] 48. **PBT - RGA Convergence (Property 1)** (KER-48)
   - Generate random operation sequences
   - Apply to multiple replicas in different orders
   - Verify final sequences are byte-identical
@@ -749,7 +763,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-033, KER-034, KER-041
   - **Validation**: Property test passes; shrinking works
 
-- [ ] 47. **PBT - Op ID Uniqueness and Ordering (Property 2)** (KER-047)
+- [ ] 49. **PBT - Op ID Uniqueness and Ordering (Property 2)** (KER-49)
   - Generate operations from multiple replicas
   - Verify no two ops share same Op ID
   - Verify Op ID ordering is transitive and consistent
@@ -762,7 +776,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-037
   - **Validation**: Property test passes
 
-- [ ] 48. **PBT - Op ID Contiguity (Property 3)** (KER-048)
+- [ ] 50. **PBT - Op ID Contiguity (Property 3)** (KER-50)
   - Generate operation sequences from single replica
   - Verify sequence numbers follow 1, 2, 3, … with no gaps
   - Verify no resets
@@ -774,7 +788,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-037
   - **Validation**: Property test passes
 
-- [ ] 49. **PBT - OpLog Deterministic Replay (Property 4)** (KER-049)
+- [ ] 51. **PBT - OpLog Deterministic Replay (Property 4)** (KER-51)
   - Generate random operations and log them
   - Replay log multiple times
   - Verify deterministic, identical results
@@ -786,7 +800,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-040
   - **Validation**: Property test passes
 
-- [ ] 50. **PBT - VV Partial Order Consistency (Property 5)** (KER-050)
+- [ ] 52. **PBT - VV Partial Order Consistency (Property 5)** (KER-52)
   - Generate random VVs
   - Test A ≤ B and B ≤ C implies A ≤ C
   - Test merge computes component-wise max
@@ -799,7 +813,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-038
   - **Validation**: Property test passes
 
-- [ ] 51. **PBT - Contiguous Prefix Rule (Property 6)** (KER-051)
+- [ ] 53. **PBT - Contiguous Prefix Rule (Property 6)** (KER-53)
   - Generate out-of-order operation sequences
   - Verify VV only advances when prefix is contiguous
   - Verify gaps are detected
@@ -811,7 +825,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-041
   - **Validation**: Property test passes
 
-- [ ] 52. **PBT - Missing Operation Recovery (Property 7)** (KER-052)
+- [ ] 54. **PBT - Missing Operation Recovery (Property 7)** (KER-54)
   - Generate operations arriving out of order
   - Verify all replicas eventually apply them correctly
   - Verify no deadlock or permanent gaps
@@ -824,7 +838,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-033, KER-034, KER-041
   - **Validation**: Property test passes; network simulator used
 
-- [ ] 53. **PBT - Duplicate Suppression Idempotence (Property 8)** (KER-053)
+- [ ] 55. **PBT - Duplicate Suppression Idempotence (Property 8)** (KER-55)
   - Generate operations and apply k times (k ≥ 1)
   - Verify state identical to applying once
   - **Acceptance Criteria**:
@@ -835,7 +849,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-041
   - **Validation**: Property test passes
 
-- [ ] 54. **PBT - Deterministic Network Reproducibility (Property 9)** (KER-054)
+- [ ] 56. **PBT - Deterministic Network Reproducibility (Property 9)** (KER-56)
   - Run multi-replica scenario with seeded network
   - Run twice with same seed
   - Verify identical message sequences and final states
@@ -847,7 +861,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-033, KER-034, KER-041
   - **Validation**: Property test passes
 
-- [ ] 55. **PBT - Membership Epoch Monotonicity (Property 10)** (KER-055)
+- [ ] 57. **PBT - Membership Epoch Monotonicity (Property 10)** (KER-57)
   - Generate membership changes (join/evict)
   - Verify epoch increments exactly 1 per change
   - Verify epoch never decreases
@@ -859,7 +873,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 56. **PBT - Stale-Epoch Fencing (Property 11)** (KER-056)
+- [ ] 58. **PBT - Stale-Epoch Fencing (Property 11)** (KER-58)
   - Generate operations from stale-epoch replicas
   - Verify all are rejected, not applied
   - Verify state and VV unchanged
@@ -871,7 +885,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 57. **PBT - Stable Frontier Monotonicity (Property 12)** (KER-057)
+- [ ] 59. **PBT - Stable Frontier Monotonicity (Property 12)** (KER-59)
   - Generate VV acknowledgments and membership updates
   - Compute frontier for each step
   - Verify frontier advances monotonically
@@ -883,7 +897,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 58. **PBT - Causally Stable Operation Identification (Property 13)** (KER-058)
+- [ ] 60. **PBT - Causally Stable Operation Identification (Property 13)** (KER-60)
   - Generate operations and compute frontier
   - Verify ops at/below frontier are stable
   - Verify all causal predecessors are also stable
@@ -895,7 +909,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 59. **PBT - Stage 1 GC Correctness (Property 14)** (KER-059)
+- [ ] 61. **PBT - Stage 1 GC Correctness (Property 14)** (KER-61)
   - Generate delete operations and frontier updates
   - Apply GC
   - Verify payload reclaimed but anchor remains
@@ -909,7 +923,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-040
   - **Validation**: Property test passes
 
-- [ ] 60. **PBT - Snapshot Fidelity (Property 15)** (KER-060)
+- [ ] 62. **PBT - Snapshot Fidelity (Property 15)** (KER-62)
   - Generate operation sequences
   - Take snapshot at random point
   - Apply post-snapshot ops in various orders
@@ -922,7 +936,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-033, KER-034, KER-040
   - **Validation**: Property test passes; network simulator used
 
-- [ ] 61. **PBT - Deterministic Operation Serialization (Property 16)** (KER-061)
+- [ ] 63. **PBT - Deterministic Operation Serialization (Property 16)** (KER-63)
   - Generate random operations and snapshots
   - Serialize to JSON
   - Deserialize
@@ -937,7 +951,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-040
   - **Validation**: Property test passes
 
-- [ ] 62. **PBT - Event Callback Consistency (Property 17)** (KER-062)
+- [ ] 64. **PBT - Event Callback Consistency (Property 17)** (KER-64)
   - Generate operation sequences
   - Register callbacks and verify fired in consistent order
   - Verify change information is complete and accurate
@@ -950,7 +964,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-034, KER-041
   - **Validation**: Property test passes
 
-- [ ] 63. **PBT - API Method Consistency (Property 18)** (KER-063)
+- [ ] 65. **PBT - API Method Consistency (Property 18)** (KER-65)
   - Generate operation sequences on two replicas with identical histories
   - Call getSequence, getVV, getMembershipView, getGCStats on both
   - Verify results are consistent and reflect same causal history
@@ -966,7 +980,7 @@ Applications (outside kernel scope)
 
 ### Phase 7: Integration Tests
 
-- [ ] 64. **Multi-Replica Convergence (2 replicas)** (KER-064)
+- [ ] 66. **Multi-Replica Convergence (2 replicas)** (KER-66)
   - Set up 2 CRDT replicas with deterministic network
   - Generate random insert/delete operations on both
   - Deliver messages in various orders (deterministic, seeded)
@@ -980,7 +994,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-033, KER-035
   - **Validation**: Integration test passes; verify convergence in all cases
 
-- [ ] 65. **Multi-Replica Convergence (3+ replicas)** (KER-065)
+- [ ] 67. **Multi-Replica Convergence (3+ replicas)** (KER-67)
   - Extend to 3 or more replicas
   - Test with varying network delays/reordering
   - Verify all replicas converge identically
@@ -992,7 +1006,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-064
   - **Validation**: Integration test passes
 
-- [ ] 66. **Snapshot + Rejoin Scenario** (KER-066)
+- [ ] 68. **Snapshot + Rejoin Scenario** (KER-68)
   - Set up 3 replicas with operations
   - Take snapshot at Replica 1
   - Simulate new Replica 2 joining via snapshot
@@ -1007,7 +1021,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-035, KER-040
   - **Validation**: Integration test passes
 
-- [ ] 67. **Membership Change and Eviction Scenario** (KER-067)
+- [ ] 69. **Membership Change and Eviction Scenario** (KER-69)
   - Set up 3 replicas
   - Generate operations
   - Evict one replica (trigger membership change, epoch increment)
@@ -1024,7 +1038,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-035, KER-042
   - **Validation**: Integration test passes
 
-- [ ] 68. **End-to-End Scenario (Combined)** (KER-068)
+- [ ] 70. **End-to-End Scenario (Combined)** (KER-70)
   - Combine:
     - Multiple replicas (3+)
     - Random insert/delete operations
@@ -1046,7 +1060,7 @@ Applications (outside kernel scope)
 
 ### Phase 8: Documentation
 
-- [ ] 69. **API Documentation and JSDoc** (KER-069)
+- [ ] 71. **API Documentation and JSDoc** (KER-71)
   - Add comprehensive JSDoc comments to all public methods
   - Document parameters, return types, side effects, exceptions (none expected)
   - Add examples for major APIs (insert, delete, getSequence, snapshot)
@@ -1060,7 +1074,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-032
   - **Validation**: Generate API docs; verify completeness
 
-- [ ] 70. **Architecture README** (KER-070)
+- [ ] 72. **Architecture README** (KER-72)
   - Document:
     - Module structure and interactions
     - Data models and invariants
@@ -1078,7 +1092,7 @@ Applications (outside kernel scope)
   - **Dependencies**: All modules complete
   - **Validation**: Review README for clarity and completeness
 
-- [ ] 71. **Design Rationale and Limitations Document** (KER-071)
+- [ ] 73. **Design Rationale and Limitations Document** (KER-73)
   - Document:
     - Why RGA and not other CRDTs
     - Why contiguous VVs
@@ -1096,7 +1110,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-070
   - **Validation**: Review for accuracy and completeness
 
-- [ ] 72. **Integration Guide for Applications** (KER-072)
+- [ ] 74. **Integration Guide for Applications** (KER-74)
   - Document:
     - How to initialize CRDT
     - How to create and apply operations
@@ -1118,7 +1132,7 @@ Applications (outside kernel scope)
 
 ### Phase 9: Transport Layer and Coordinator Service
 
-- [ ] 73. **BroadcastChannel Transport (Multi-Tab Demo) [SHOULD]** (KER-073)
+- [ ] 75. **BroadcastChannel Transport (Multi-Tab Demo) [SHOULD]** (KER-75)
   - Create transport layer using BroadcastChannel API
   - Serialize/broadcast operations between tabs
   - Listen for and apply remote operations
@@ -1132,7 +1146,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-032, KER-072
   - **Validation**: Multi-tab test; verify operations sync
 
-- [ ] 74. **IndexedDB Persistence [SHOULD]** (KER-074)
+- [ ] 76. **IndexedDB Persistence [SHOULD]** (KER-76)
   - Implement persistence layer:
     - Save/load CRDT state from IndexedDB
     - Store operation log
@@ -1146,7 +1160,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-032
   - **Validation**: Test: save → reload → verify state
 
-- [ ] 75. **Coordinator Service (Node.js) [MUST]** (KER-075)
+- [ ] 77. **Coordinator Service (Node.js) [MUST]** (KER-77)
   - Create Node.js coordinator service:
     - Collect VV acknowledgments from replicas
     - Compute stable frontier
@@ -1166,7 +1180,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-032, KER-042
   - **Validation**: Integration test with coordinator; verify manual eviction via UI; verify no auto-eviction timeout
 
-- [ ] 76. **WebRTC Transport [STRETCH]** (KER-076)
+- [ ] 78. **WebRTC Transport [STRETCH]** (KER-78)
   - Implement WebRTC-based transport layer
   - Support peer-to-peer operation exchange
   - Handle connection lifecycle
@@ -1182,7 +1196,7 @@ Applications (outside kernel scope)
 
 ### Phase 10: Applications (Outside Kernel Scope, but Required)
 
-- [ ] 77. **Graveyard Whiteboard Implementation [MUST]** (KER-077)
+- [ ] 79. **Graveyard Whiteboard Implementation [MUST]** (KER-79)
   - React app for collaborative drawing
   - Use CRDT kernel for state management
   - Display operations as strokes
@@ -1196,7 +1210,7 @@ Applications (outside kernel scope)
   - **Dependencies**: KER-073
   - **Validation**: Visual testing; draw → verify sync
 
-- [ ] 78. **Cursed Checklist Implementation [MUST]** (KER-078)
+- [ ] 80. **Cursed Checklist Implementation [MUST]** (KER-80)
   - React app for collaborative to-do list
   - Use CRDT kernel for state management
   - Show checklist items with collaborative editing
@@ -1278,6 +1292,12 @@ Each task must satisfy:
 6. **Documented** with JSDoc and README updates
 
 Upon completion of all MUST tasks, the kernel is feature-complete and ready for applications to build on top.
+
+
+
+
+
+
 
 
 
