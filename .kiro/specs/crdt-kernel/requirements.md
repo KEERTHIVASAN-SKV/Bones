@@ -239,7 +239,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 5. WHEN a replica is evicted (its Replica ID is removed from the active set), THE Epoch is incremented.
 6. THE Kernel SHALL provide a method to query the current membership view (active replica IDs and epoch).
 7. WHEN a replica creates a snapshot or acknowledges its VV to the coordinator, THE Snapshot/Ack SHALL include the current epoch.
-8. WHEN a message is received from a replica, THE Kernel SHALL compare the message's epoch against the current epoch. IF the message's epoch is less than the current epoch, THE Kernel SHALL recognize it as from a stale or evicted peer (see Requirement 10).
+8. WHEN an operation is received from a replica, THE Kernel SHALL check whether its author is in the active membership. IF the author is not active, THE Kernel SHALL check whether `op.seq <= cutoff[author]` (see Requirement 10.1 for fencing rule). IF the operation fails the fencing check, it is rejected and NOT applied. **NOTE:** The epoch field on operations is informational only and is NOT used for fencing; fencing is by author membership and cutoff.
 
 #### Correctness Properties
 
@@ -378,7 +378,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - An op arriving before its anchor/target is never lost; it waits in the buffer.
 7. FOR Duplicate Suppression (Requirement 7), THERE SHALL be a property test verifying that duplicate operations do not corrupt state or cause duplicate entries.
 8. FOR Membership Epochs and Fencing (Requirements 9, 10), THERE SHALL be property tests verifying:
-   - Stale-epoch operations are never applied and do not block the stable frontier.
+   - Evicted-author operations are never applied and do not block the stable frontier.
    - Evicted replicas' ops beyond their cutoff are never applied.
 9. FOR Stable Frontier Computation (Requirement 11), THERE SHALL be property tests verifying:
    - The frontier advances monotonically and only when safe.
@@ -404,7 +404,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 ---
 
-### 16. Unit Tests and Test Coverage
+### 15. Unit Tests and Test Coverage
 
 **User Story**: As a developer, I want every kernel module to have comprehensive unit tests, so that regressions are caught early and integration is straightforward.
 

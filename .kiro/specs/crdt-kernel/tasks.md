@@ -2,7 +2,7 @@
 
 ## Overview
 
-This implementation plan breaks down the CRDT Kernel design into discrete, actionable tasks organized into 9 major groups: project setup, core modules, orchestrator, testing infrastructure, unit tests, property-based tests, integration tests, documentation, and coordinator service. Tasks are prioritized as MUST (core functionality), SHOULD (enhancements), or STRETCH (advanced goals). Each task includes effort estimates, dependencies, acceptance criteria, and validation strategies.
+This implementation plan breaks down the CRDT Kernel design into discrete, actionable tasks organized into 10 major groups: project setup, core modules, orchestrator, testing infrastructure, unit tests, property-based tests, integration tests, documentation, transport & coordinator, and applications. Tasks are prioritized as MUST (core functionality), SHOULD (enhancements), or STRETCH (advanced goals). Each task includes effort estimates, dependencies, acceptance criteria, and validation strategies.
 
 **Target Completion**: Dec 3, 2026 (before Kiroween Dec 4 deadline)
 
@@ -11,26 +11,32 @@ This implementation plan breaks down the CRDT Kernel design into discrete, actio
 ## Task Groups and Dependencies
 
 ```
-Setup (KER-006 to KER-028)
-  ├→ Project Setup (KER-006 to KER-010)
-  ├→ Core RGA Module (KER-011 to KER-015)
-  ├→ Core VV Module (KER-016 to KER-020)
-  ├→ Core OpLog & Membership (KER-021 to KER-025)
-  └→ Core GC & Snapshot (KER-026 to KER-028)
+Setup (KER-001 to KER-005)
   ↓
-Orchestrator (KER-037 to KER-045)
+Core Modules (KER-006 to KER-029)
+  ├→ Lamport Clock Module (KER-006)
+  ├→ RGA Module (KER-007 to KER-010)
+  ├→ VV Module (KER-011 to KER-014)
+  ├→ OpLog Module (KER-015 to KER-017)
+  ├→ Membership Module (KER-018 to KER-022)
+  ├→ GC Module (KER-023 to KER-026)
+  └→ Snapshot Module (KER-027 to KER-029)
   ↓
-Testing Infrastructure (KER-046 to KER-063)
-  ├→ Unit Tests (KER-046 to KER-055)
-  └→ Property-Based Tests (KER-056 to KER-063)
+Orchestrator (KER-030 to KER-033)
   ↓
-Integration Tests (KER-064 to KER-068)
+Testing Infrastructure (KER-034 to KER-037)
   ↓
-Documentation (KER-073 to KER-076)
+Unit Tests (KER-038 to KER-046)
   ↓
-Coordinator Service (KER-077 to KER-078)
+Property-Based Tests (KER-047 to KER-064)
   ↓
-Applications (outside kernel scope)
+Integration Tests (KER-065 to KER-069)
+  ↓
+Documentation (KER-070 to KER-073)
+  ↓
+Transport & Coordinator (KER-074 to KER-077)
+  ↓
+Applications (KER-078 to KER-080)
 ```
 
 ---
@@ -1255,31 +1261,32 @@ All tasks must respect these dependencies:
 {
   "waves": [
     { "id": 0, "tasks": ["KER-001", "KER-002", "KER-003", "KER-004", "KER-005"] },
-    { "id": 1, "tasks": ["KER-006", "KER-011", "KER-015", "KER-018", "KER-022", "KER-026"] },
-    { "id": 2, "tasks": ["KER-007", "KER-012", "KER-016", "KER-019", "KER-023", "KER-027"] },
-    { "id": 3, "tasks": ["KER-008", "KER-013", "KER-017", "KER-020", "KER-024", "KER-028"] },
-    { "id": 4, "tasks": ["KER-009", "KER-010", "KER-014", "KER-021", "KER-025"] },
-    { "id": 5, "tasks": ["KER-029", "KER-033", "KER-034", "KER-035", "KER-036"] },
-    { "id": 6, "tasks": ["KER-030", "KER-031", "KER-032"] },
-    { "id": 7, "tasks": ["KER-037", "KER-038", "KER-039", "KER-040", "KER-041", "KER-042", "KER-043", "KER-044", "KER-045"] },
-    { "id": 8, "tasks": ["KER-046", "KER-047", "KER-048", "KER-049", "KER-050", "KER-051", "KER-052", "KER-053", "KER-054", "KER-055", "KER-056", "KER-057", "KER-058", "KER-059", "KER-060", "KER-061", "KER-062", "KER-063"] },
-    { "id": 9, "tasks": ["KER-064", "KER-065", "KER-066", "KER-067", "KER-068"] },
-    { "id": 10, "tasks": ["KER-069", "KER-070", "KER-071", "KER-072"] },
-    { "id": 11, "tasks": ["KER-073", "KER-074", "KER-075"] },
-    { "id": 12, "tasks": ["KER-076"] }
+    { "id": 1, "tasks": ["KER-006", "KER-011", "KER-015", "KER-018", "KER-023", "KER-027"] },
+    { "id": 2, "tasks": ["KER-007", "KER-012", "KER-016", "KER-019", "KER-024", "KER-028"] },
+    { "id": 3, "tasks": ["KER-008", "KER-013", "KER-017", "KER-020", "KER-025"] },
+    { "id": 4, "tasks": ["KER-009", "KER-010", "KER-014", "KER-021", "KER-022", "KER-026"] },
+    { "id": 5, "tasks": ["KER-029", "KER-034", "KER-035", "KER-036", "KER-037"] },
+    { "id": 6, "tasks": ["KER-030", "KER-031", "KER-032", "KER-033"] },
+    { "id": 7, "tasks": ["KER-038", "KER-039", "KER-040", "KER-041", "KER-042", "KER-043", "KER-044", "KER-045", "KER-046"] },
+    { "id": 8, "tasks": ["KER-047", "KER-048", "KER-049", "KER-050", "KER-051", "KER-052", "KER-053", "KER-054", "KER-055", "KER-056", "KER-057", "KER-058", "KER-059", "KER-060", "KER-061", "KER-062", "KER-063", "KER-064"] },
+    { "id": 9, "tasks": ["KER-065", "KER-066", "KER-067", "KER-068", "KER-069"] },
+    { "id": 10, "tasks": ["KER-070", "KER-071", "KER-072", "KER-073"] },
+    { "id": 11, "tasks": ["KER-074", "KER-075", "KER-076", "KER-077"] },
+    { "id": 12, "tasks": ["KER-078", "KER-079", "KER-080"] }
   ]
 }
 ```
 
 ## Notes
 
-- **Parallelization**: Waves 1-4 can run in parallel once wave 0 completes (all core modules can be built simultaneously)
+- **Parallelization**: Waves 1–4 can run in parallel once wave 0 completes (all core modules can be built simultaneously)
 - **Critical Path**: Setup → Core Modules → Orchestrator → Testing/Documentation → Transport/Apps
-- **Testing as You Go**: Begin unit tests (KER-037+) once individual modules complete (don't wait for all modules)
-- **Property Tests Depend on Network Sim**: KER-033 must complete before PBT (KER-046+) can fully run
-- **Documentation is Parallel**: KER-069 to KER-072 can start once design is final (doesn't block implementation)
-- **Optional/SHOULD/STRETCH**: KER-043, KER-044, KER-071, KER-073, KER-074, KER-076 can be deferred if time is tight
-- **Order if Behind**: Cut in order: WebRTC (KER-076) → Stage 2 GC (stretch, first cut after WebRTC) → LWW map → elaborate visual design. BroadcastChannel (KER-073) is a DECIDED Should-have, not cut before WebRTC.
+- **Testing as You Go**: Begin unit tests (KER-038+) once individual modules complete (don't wait for all modules)
+- **Property Tests Depend on Network Sim**: KER-034 must complete before PBT (KER-047+) can fully run
+- **Documentation is Parallel**: KER-070 to KER-073 can start once design is final (doesn't block implementation)
+- **Priority**: MUST tasks (core kernel) are never cut; optional cuts in order: WebRTC (KER-078) → Coordinator (KER-077) → BroadcastChannel (KER-074) → IndexedDB (KER-075)
+- **BroadcastChannel (KER-074)** is a DECIDED Should-have for multi-tab sync demo; do not cut before Transport layer is demonstrated
+- **Graveyard Panel** (visual in KER-079 and KER-080) is the centerpiece of the Design criterion; prioritize its implementation and UX polish
 
 ## Acceptance and Sign-Off
 

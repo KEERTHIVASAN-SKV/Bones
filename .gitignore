@@ -1,0 +1,31 @@
+# Node.js and npm
+node_modules/
+npm-debug.log
+yarn-error.log
+*.log
+
+# Build and distribution
+dist/
+build/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.env.local
+.env.*.local
+
+# OS files
+Thumbs.db
+
+# IMPORTANT: .kiro MUST NOT be gitignored — hackathon rule
+# .kiro/ directory contains specs, steering, and hooks required by the submission
+# Never add .kiro to this file

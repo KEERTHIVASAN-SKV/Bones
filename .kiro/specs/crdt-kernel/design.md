@@ -11,11 +11,13 @@ The CRDT Kernel is a deterministic, pure TypeScript implementation of a Replicat
 - **API Simplicity**: Clean public interface hiding implementation complexity
 - **Educational Value**: Well-documented, from-scratch implementation suitable for learning
 
+**Implementation Note**: When buffered operations are unblocked (e.g., a gap fills), use an **iterative work queue** rather than recursion to avoid stack overflow. See Algorithm 3 (applyOp, Unblock Buffered Operations) for details.
+
 ---
 
 ## Components and Interfaces
 
-The CRDT Kernel is composed of seven core modules that work together to provide deterministic, memory-efficient collaborative editing:
+The CRDT Kernel is composed of eight core modules that work together to provide deterministic, memory-efficient collaborative editing:
 
 ### Module Overview
 
@@ -811,20 +813,20 @@ class CRDT<T = any> {
 
   /**
    * Insert a new element after the specified anchor (or at HEAD if undefined).
-   * @param replicaId Replica creating this operation
+   * The replica ID is already known from the CRDT constructor.
    * @param anchorId Op ID of element to insert after (undefined = HEAD)
    * @param value Data to insert
    * @returns Operation that was applied locally and should be broadcast
    */
-  insert(replicaId: string, anchorId: OpId | undefined, value: T): Operation<T>;
+  insert(anchorId: OpIdKey | undefined, value: T): Operation<T>;
 
   /**
    * Delete an element (mark as tombstone).
-   * @param replicaId Replica creating this operation
+   * The replica ID is already known from the CRDT constructor.
    * @param elementId Op ID of element to delete
    * @returns Operation that was applied locally and should be broadcast
    */
-  delete(replicaId: string, elementId: OpId): Operation<T>;
+  delete(elementId: OpIdKey): Operation<T>;
 
   /**
    * Apply a remote operation to this replica's state.

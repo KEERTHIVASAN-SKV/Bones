@@ -115,7 +115,7 @@ Full specification documents are in `.kiro/specs/crdt-kernel/`:
 
 - **requirements.md**: Functional and non-functional requirements (14 requirements)
 - **design.md**: Detailed design including algorithms, data structures, and invariants
-- **tasks.md**: 79 implementation tasks organized in 10 phases
+- **tasks.md**: 80 implementation tasks organized in 10 phases
 
 ### Key Algorithms
 
@@ -288,4 +288,4 @@ This implementation is for educational purposes. It is not a production-ready CR
 
 ---
 
-**Ready to implement?** See `.kiro/specs/crdt-kernel/tasks.md` for the 79-task implementation roadmap starting with Phase 1 setup tasks.
+**Ready to implement?** See `.kiro/specs/crdt-kernel/tasks.md` for the 80-task implementation roadmap starting with Phase 1 setup tasks.
