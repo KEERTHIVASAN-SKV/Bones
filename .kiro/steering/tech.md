@@ -129,6 +129,7 @@ interface Operation<T> {
 
 interface Element<T> {
   id: OpIdKey;
+  anchor: OpIdKey | undefined;  // parent in the RGA tree (undefined = HEAD); never changes
   lamport: number;
   value?: T;
   deleted: boolean;
@@ -136,9 +137,38 @@ interface Element<T> {
   payloadReclaimed: boolean;
 }
 
-type VersionVector = Map<string, number>;  // replicaId → seq
+type VersionVector = Map<string, number>;  // replicaId → highest CONTIGUOUS applied seq
 type OpIdKey = `${string}:${number}`;
 ```
+
+The per-replica sequence number is the `seq` part of `Operation.id`; read it with `parseOpId(op.id)`. There is no separate `seq` field.
+
+### RGA Ordering Rule (source of truth)
+
+The RGA is a **tree**: each element is a child of its `anchor` (or of HEAD). The visible/structural order is a **depth-first, pre-order traversal** of that tree. Children of the same parent are ordered **newest first**: higher `(lamport, replicaId)` comes first, comparing `lamport` numerically and then `replicaId` by code unit (never `localeCompare`).
+
+- A local insert has the highest Lamport value the replica has seen, so it becomes the first child of its anchor and lands **immediately after** the anchor (this is what makes "insert at visible index k lands at k" hold, Requirement 1.8).
+- An element's whole subtree stays contiguous. A concurrent sibling is never placed inside another sibling's subtree.
+- Traversal must be iterative (explicit stack), not recursive: typing a long string creates a chain as deep as the string.
+- This matches the standard RGA rule in requirements.md §1.3. An earlier draft of design.md scanned oldest-first; that ordering puts a middle insert after its anchor's existing children and was removed (see SPEC_REVIEW_FIXES_APPLIED.md, "Correctness cases").
+
+### Type Mapping (design.md drafts → `kernel/src/types.ts`)
+
+`types.ts` and this file are the source of truth. Older drafts of design.md/requirements.md used the names on the left.
+
+| Earlier draft | Now |
+|---------------|-----|
+| `OpId` object `{ replicaId, seq }` | `OpIdKey` string `` `${replicaId}:${seq}` `` |
+| `Operation.replicaId` + `Operation.seq` (no `id`) | `Operation.id` (OpIdKey) + `Operation.replicaId`; seq = `parseOpId(id).seq` |
+| `Operation.anchorId` | `Operation.anchor` |
+| `Operation.elementId` | `Operation.target` |
+| `Element.epoch` | removed (epoch is diagnostic-only, kept on `Operation.epoch`) |
+| (none) | `Element.anchor` (new; required for tree order and snapshots) |
+| `MembershipView.activeReplicas` | `MembershipView.activeMembers` |
+| (cutoffs kept separately) | `MembershipView.evictedMembers: Map<replicaId, cutoff>` |
+| `GCStats { bytesReclaimed, tombstonesRetained, reclaimableOps }` | `GCStats { tombstoneCount, payloadsReclaimed, bytesSaved, replicasEvicted, stableFrontier }` |
+| `Snapshot { sequence, vv, membership, metadata }` | `Snapshot { elements, vv, membership (MembershipView), lamportClock, replicaId, gcStats?, stableFrontier? }` (no wall-clock field) |
+| `OperationBuffer { buffer, missingOps }` | `OperationBuffer { ops, missing }` |
 
 ### CRDT API Signature
 
@@ -168,7 +198,10 @@ class CRDT<T> {
 
   // Snapshots
   snapshot(): Snapshot<T>;
-  static fromSnapshot(snapshot: Snapshot<T>): CRDT<T>;
+  // Restores state only; post-snapshot ops must then go through applyOp().
+  // `replicaId` defaults to snapshot.replicaId (restart of the same replica).
+  // A rejoining evicted replica MUST pass a NEW replicaId (new incarnation).
+  static fromSnapshot(snapshot: Snapshot<T>, replicaId?: string): CRDT<T>;
 }
 ```
 

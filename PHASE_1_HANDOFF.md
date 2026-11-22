@@ -198,3 +198,11 @@ Refer to:
 ---
 
 **Happy coding! Phase 1 → 2 handoff complete. 🦴**
+
+---
+
+## Superseded (2026-11-22)
+
+Parts of this handoff are out of date. `design.md` was synced to `kernel/src/types.ts` (it no longer defines an `OpId` object or uses recursion in Algorithm 3), and the spec was corrected for the RGA tree structure, no-op handling, fencing, eviction, and snapshot rejoin. For the current state and the remaining open items, read the addendum at the end of `SPEC_REVIEW_FIXES_APPLIED.md` and `PHASE_1_COMPLETE.md` ("Correction").
+
+When starting KER-006, implement the RGA as an anchor tree per `design.md` Algorithm 1 (not a flat array scan), with siblings ordered newest-first.

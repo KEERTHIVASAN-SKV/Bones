@@ -34,7 +34,9 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 - **Epoch**: Integer incremented on every membership change.
 - **Zombie Peer**: A replica still registered as a member but no longer communicating; stalls the stable frontier.
 - **Eviction ("Exorcism")**: An authorized membership change removing a zombie peer and incrementing the epoch.
-- **Fencing**: Rejecting messages/ops from evicted or stale-epoch peers.
+- **Fencing**: Rejecting edit operations from authors that are neither active nor within their eviction cutoff, and rejecting control messages from non-active or stale-epoch senders. These are two separate mechanisms (see §10 "Fencing Architecture").
+- **Cutoff**: For an evicted replica, the highest sequence number of its ops that surviving members still accept (`cutoff[target]`).
+- **No-op Operation**: A valid operation whose application changes no state (e.g., a delete of an already-deleted element). It is still logged, counted as applied, and advances the VV.
 - **Snapshot**: Full current state plus VV, used to bootstrap a new or returning replica.
 - **Coordinator**: Small trusted Node.js service managing membership, epochs, and GC authorization. **[DECIDED]**
 - **Graveyard Panel**: UI panel visualizing tombstones, anchors, frontier, epoch, and reclaimed memory. **[DECIDED]**
@@ -51,10 +53,10 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 1. THE Kernel SHALL implement a sequence CRDT following the RGA (Replicated Growable Array) model.
 2. WHEN an insert operation is created at a replica, THE Kernel SHALL assign it a unique Op ID of form `(replicaId, sequence)` and a Lamport clock timestamp: local op uses `clock + 1`; applying any op sets `clock = max(clock, op.lamport)`.
-3. WHEN an insert is applied, THE Kernel SHALL place it at position `index(anchor) + 1` (or position 0 for HEAD). To find the correct position, scan forward while `key(seq[pos]) > key(newElement)`, where key is `(lamport, replicaId)` with code-unit comparison (not locale-dependent).
-4. WHEN determining position, THE Kernel SHALL include tombstones (deleted elements) in the scan; they are traversed but new elements are not placed before/within them.
+3. WHEN an insert is applied, THE Kernel SHALL attach the new element as a child of its anchor (or of HEAD) in the RGA tree. Children of the same parent SHALL be ordered **newest first** by `key = (lamport, replicaId)`: higher `lamport` first; on equal `lamport`, higher `replicaId` first, compared by code unit (not locale-dependent). The sequence order SHALL be the **depth-first pre-order traversal** of this tree (parent, then each child's whole subtree in order). Consequently an element's descendants always stay contiguous after it, and a concurrent sibling is never placed inside another sibling's subtree. Each element SHALL store its `anchor` so the tree can be rebuilt from a snapshot.
+4. WHEN traversing or positioning, THE Kernel SHALL treat tombstones (deleted elements) as ordinary tree nodes: they keep their children and their position, and an insert anchored on a tombstone is placed in the tombstone's subtree. The traversal SHALL be iterative (explicit stack) so that very deep chains (e.g., a long typed string) cannot overflow the call stack.
 5. WHEN a delete operation is applied, THE Kernel SHALL mark the element as deleted (tombstone) and retain its structural position.
-6. THE Kernel SHALL maintain insertion order visibility to the application. Visible (non-deleted) elements appear in RGA order. Concurrent inserts at the same anchor are ordered deterministically by `(lamport, replicaId)` using code-unit comparison.
+6. THE Kernel SHALL maintain insertion order visibility to the application. Visible (non-deleted) elements appear in RGA order. Concurrent inserts at the same anchor are ordered deterministically, newest first, by `(lamport, replicaId)` using code-unit comparison.
 7. WHEN traversing the sequence, THE Kernel SHALL return only non-deleted elements to the application; deleted elements (tombstones) remain internal.
 8. WHEN a local insert is made at visible index k, it SHALL end up at visible index k after convergence.
 9. THE Kernel SHALL ensure that concurrent insert and delete operations on the same element resolve consistently across all replicas without requiring a central coordinator for ordering.
@@ -81,7 +83,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 3. WHEN any operation is applied (local or remote), THE Kernel SHALL update the local clock: `local_clock = max(local_clock, op.lamport)`.
 4. THE Kernel SHALL ensure that no two operations from the same replica have the same `sequence`.
 5. THE Kernel SHALL ensure that Op IDs are globally unique across all replicas (no two replicas generate the same Op ID).
-6. WHEN comparing element positions by Op ID, THE Kernel SHALL use the key `(lamport, replicaId)` with code-unit comparison (deterministic, not locale-dependent): `a.replicaId < b.replicaId ? -1 : a.replicaId > b.replicaId ? 1 : 0` for replicaId, then numeric comparison for lamport.
+6. WHEN comparing sibling elements, THE Kernel SHALL use the key `(lamport, replicaId)`: compare `lamport` numerically first; only if equal, compare `replicaId` with code-unit comparison (deterministic, not locale-dependent): `a.replicaId < b.replicaId ? -1 : a.replicaId > b.replicaId ? 1 : 0`.
 7. THE Kernel SHALL track the current sequence number for each replica locally (as part of the state) and increment it atomically with each operation.
 
 #### Correctness Properties
@@ -101,7 +103,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 1. WHEN an operation is created at this replica, THE Kernel SHALL append it to a local, append-only operation log.
 2. THE Kernel SHALL assign each log entry a local sequence number (1, 2, 3, …) independent of the Op ID's sequence.
-3. WHEN an operation is received from another replica, THE Kernel SHALL append it to the same log if it has not been seen before (deduplication).
+3. WHEN an operation is received from another replica and has passed fencing and dependency checks (i.e., it is applied), THE Kernel SHALL append it to the same log if it has not been seen before (deduplication). This applies to no-op operations too (e.g., a delete of an already-deleted element): they are logged exactly once. Operations still waiting in the dependency buffer are not in the log, so the log order is always a valid causal replay order.
 4. THE Kernel SHALL provide a method to retrieve all operations in log order.
 5. THE Kernel SHALL provide a method to retrieve all operations created by a specific replica.
 6. WHEN reconstructing state from the operation log, THE Kernel SHALL apply all operations in causal order and produce the same sequence state.
@@ -121,15 +123,16 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 #### Acceptance Criteria
 
-1. WHEN determining insertion position, THE Kernel SHALL scan the sequence including tombstones; they are traversed to find the correct position by Lamport clock and replicaId ordering.
-2. THE Kernel SHALL NOT place new elements before or within tombstones; new elements are inserted at the position after scanning past all elements with lesser `(lamport, replicaId)` keys.
+1. WHEN determining insertion position, THE Kernel SHALL treat tombstones like any other tree node: they are part of the tree, keep their children, and are traversed in the depth-first order (see Requirement 1.3–1.4).
+2. THE Kernel SHALL place a new element only as a child of its anchor (or of HEAD), ordered among that parent's children by the sibling key; it SHALL NOT place a new element inside the subtree of one of its siblings.
 3. Tombstones SHALL maintain their structural position in the sequence for causality tracking and as anchor points.
-4. Concurrent inserts at the same anchor SHALL be ordered relative to each other by Lamport clock, then by replicaId.
+4. Concurrent inserts at the same anchor SHALL be ordered relative to each other newest first: by Lamport clock (higher first), then by replicaId (higher first, code-unit comparison).
 
 #### Correctness Properties
 
 - **Tombstone Visibility**: Tombstones are traversed during position calculation and remain as structural anchors.
 - **Deterministic Placement**: Concurrent inserts at the same anchor are always ordered the same way across all replicas, based on `(lamport, replicaId)` ordering.
+- **Subtree Contiguity**: For any element, all of its descendants appear contiguously after it, at any nesting depth, on every replica.
 
 ---
 
@@ -151,6 +154,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - **Concurrent**: If neither A ≤ B nor B ≤ A, the VVs are concurrent (some operations known only to A, others only to B)
 8. THE Kernel SHALL provide a method to compute the merge (component-wise maximum) of two VVs.
 9. THE Kernel SHALL provide a method to increment a specific replica's entry in the VV.
+10. THE VV SHALL advance for EVERY applied operation, including no-op operations (see Requirement 6.8), and SHALL NOT advance for buffered operations. The contiguity check (`seq === VV[replicaId] + 1`) SHALL be enforced where operations are applied (the CRDT orchestrator), not only inside the VV helper functions. A VV entry SHALL never decrease.
 
 #### Correctness Properties
 
@@ -172,10 +176,11 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - For DELETE ops: the target element must already be applied.
 2. IF an operation is not ready, THE Kernel SHALL buffer it and NOT drop it.
 3. WHEN missing operations are received, THE Kernel SHALL apply them in sequence order and then re-check the buffer for any newly unblocked operations.
-4. THE Kernel SHALL maintain the buffer efficiently and continue checking after each applied operation until nothing more unblocks.
+4. THE Kernel SHALL maintain the buffer efficiently and continue checking after each applied operation until nothing more unblocks. Unblocking SHALL use an **iterative work queue** (no recursive `applyOp` calls), so long dependency chains cannot overflow the call stack. A buffered operation SHALL be re-checked against fencing before it is applied (the membership may have changed while it waited); if it is now fenced it is rejected, not applied.
 5. THE Version Vector counts only APPLIED operations; it does not advance until the contiguous prefix is complete.
 6. WHEN requesting missing operations, THE Kernel SHALL send its current VV as a summary of what it already has.
 7. IF after a timeout or max-retry period missing operations are still not received, THE Kernel SHALL be in a defined state and may emit a diagnostic event (not an error, as the replica may be offline).
+8. A valid operation that is ready to apply but changes no state (a **no-op**, e.g., a delete of an already-deleted element, which happens when two replicas concurrently delete the same element) SHALL still be treated as applied: it is appended to the log, counted as applied (so re-delivery is a duplicate), and advances the VV. Only events (e.g., `sequenceChanged`) depend on whether state actually changed. Treating a no-op as "not applied" would leave a permanent gap in the VV and buffer every later operation from that replica forever. Delete operations SHALL still be recorded against their target element even when they are no-ops, because Stage 1 GC (Requirement 12.2) considers ALL delete ops targeting an element.
 
 #### Correctness Properties
 
@@ -253,20 +258,36 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 **User Story**: As the coordinator and kernel, I want to safely evict offline replicas and fence stale peers, so that the stable frontier can advance and garbage collection can proceed.
 
+#### Fencing Architecture (Two Separate Mechanisms) — "§10.0"
+
+The kernel uses two distinct fencing mechanisms. They are deliberately separate and MUST NOT be conflated:
+
+1. **EDIT-OPERATION FENCING (by author + cutoff)**
+   - Applies to: `insert` and `delete` operations.
+   - Rule: accept if the author is active, OR the author is evicted AND `op.seq <= cutoff[author]`. Otherwise reject.
+   - Rationale: an edit op carries its own causal identity (`replicaId`, `seq`), so a per-author cutoff bounds exactly which ops from an evicted author are safe. An epoch comparison is too coarse for this. The `epoch` field on an operation is informational only and is never used to fence edits.
+2. **CONTROL-MESSAGE FENCING (by epoch + active membership)**
+   - Applies to: acks, sync requests, membership updates, frontier updates.
+   - Rule: reject (with a `rejected` response carrying the current epoch) if the sender is not in the active membership OR the sender's epoch is lower than the current epoch. Frontiers are applied only if they carry the replica's current epoch (Requirement 11.8).
+   - Rationale: control messages carry no per-author seq that a cutoff could be checked against, so membership + epoch is the only safe filter.
+
+Never apply epoch-based fencing to edit operations, and never apply cutoff-based fencing to control messages.
+
 #### Acceptance Criteria
 
-1. FENCING IS BASED ON AUTHOR, NOT EPOCH: THE Kernel SHALL accept an operation if:
+1. FENCING OF EDIT OPERATIONS IS BASED ON AUTHOR, NOT EPOCH (mechanism 1 above): THE Kernel SHALL accept an operation if:
    - Its author (replicaId) is in the active membership, OR
    - Its author is evicted AND `op.seq <= cutoff[author]`.
    Otherwise, the operation is rejected.
-2. MESSAGES (ack, sync request) from a non-active replica or from a stale-epoch reply receive a `rejected` response with the current epoch.
-3. EVICTION (manual only): THE Coordinator SHALL:
-   - Send `evict-prepare(target)` to all active members.
-   - Each active member stops applying new ops from target and replies with its contiguous applied seq for target.
-   - Coordinator computes `cutoff[target] = max(replies)`.
-   - Coordinator publishes the new membership (epoch+1, target removed, cutoff recorded).
-   - Active members fetch target's ops up to cutoff from peers.
-   - Eviction stays pending until every remaining active member has replied.
+2. CONTROL MESSAGES (ack, sync request, membership/frontier update; mechanism 2 above) from a non-active replica or carrying a stale epoch receive a `rejected` response with the current epoch.
+3. EVICTION (manual only, two phases with a reconciliation barrier). THE Coordinator SHALL:
+   - **Prepare:** Send `evict-prepare(target)` to all active members. Each active member stops applying new ops from target and replies with its contiguous applied seq for target.
+   - Compute `cutoff[target] = max(replies)` once every active member has replied (until then the eviction stays in the prepare phase).
+   - **Publish:** Publish the new membership (epoch+1, target removed, cutoff recorded). From this point edit ops from target are fenced by the cutoff. The eviction is now **pending**, not complete.
+   - **Reconcile:** Each surviving member fetches target's ops up to cutoff from peers (backfill), applies them through the normal `applyOp` pipeline, and then sends `evict-confirm(target, vv)` with `vv[target] >= cutoff[target]`.
+   - **Commit:** The Coordinator marks the eviction **complete** only when EVERY surviving member has sent a valid `evict-confirm`. Until then the Graveyard panel shows the exorcism as pending, and the Coordinator keeps re-sending backfill requests (retries and timers live in the coordinator, never in the kernel).
+   - A survivor that does not confirm is listed as stalled in the Graveyard panel. The Coordinator SHALL NOT evict it automatically (see item 5); the operator may Exorcise it manually, which starts its own eviction.
+   - While an eviction is pending the stable frontier remains safe: `Frontier[target] = min over survivors of ack[target]`, so a survivor that has not yet backfilled holds that entry back and no payload of target's ops is reclaimed before every survivor has them.
 4. AN EVICTED REPLICA THAT RETURNS:
    - May export its orphaned local ops as JSON (for diagnostic purposes).
    - Must rejoin from a snapshot as a NEW incarnation (new replicaId).
@@ -279,6 +300,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 - **Safety**: Stale operations from evicted peers are never applied (fenced by cutoff).
 - **Liveness**: The stable frontier advances after a zombie is manually evicted.
 - **Consistency**: All active replicas agree on the evicted set, epoch, and cutoff after membership update.
+- **Reconciliation**: An eviction is reported complete only after every surviving member holds all of the evicted replica's ops up to its cutoff.
 - **No Silent Merge**: Evicted replicas cannot corrupt the state through ops beyond their cutoff.
 
 ---
@@ -303,6 +325,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 - **Safety**: An operation is only marked as causally stable if all active replicas have applied it.
 - **Monotonicity**: The Stable Frontier never moves backward; it only advances or stays the same.
 - **Coordination-Free**: Once the Stable Frontier is communicated, active replicas can independently and safely reclaim payload.
+- **Honest-Ack Assumption**: The frontier is safe under the assumption that replicas report their VVs honestly (a replica never claims to have applied ops it has not). A Byzantine replica could report false acks; that is out of scope for this educational kernel.
 
 ---
 
@@ -336,17 +359,18 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 #### Acceptance Criteria
 
 1. THE Kernel SHALL provide a method to create a **Snapshot** containing:
-   - The current RGA sequence (all elements, with their Op IDs and tombstone/delete status)
+   - The current RGA sequence (all elements in traversal order, with their Op IDs, anchors, and tombstone/delete status)
    - The current Version Vector (VV)
-   - The current Membership View (active replica IDs and epoch)
-   - Logical metadata derived from kernel state (e.g., causal frontier at snapshot time, not wall-clock timestamp)
+   - The current Membership View (active replica IDs, evicted replica IDs with their cutoffs, and epoch)
+   - Logical metadata derived from kernel state (Lamport clock, GC statistics, causal frontier at snapshot time; no wall-clock timestamp)
 2. THE Snapshot SHALL be serializable to a compact format (e.g., JSON or binary) suitable for storage or transmission.
 3. WHEN a new replica (or a returning replica after eviction) is bootstrapped with a Snapshot, THE Kernel SHALL:
-   - Initialize the RGA from the snapshot's sequence.
-   - Initialize the VV from the snapshot's VV.
-   - Initialize the membership view from the snapshot's membership.
+   - Rebuild the RGA tree from the snapshot's elements (using each element's anchor).
+   - Initialize the VV from the snapshot's VV (every op at or below it counts as already applied).
+   - Initialize the membership view, including evicted replicas' cutoffs, from the snapshot's membership.
+   - Initialize the Lamport clock from the snapshot.
    - Be ready to apply operations that arrived after the snapshot was taken.
-4. WHEN operations are applied after snapshot-rejoin, THE Kernel SHALL merge them with the snapshotted state using the same convergence algorithm (operations with Op IDs > snapshot's VV are inserted, duplicates are suppressed).
+4. WHEN operations arrive after snapshot-rejoin, THE Kernel SHALL process every one of them through the SAME `applyOp` pipeline as live operations (author fencing against the snapshot's membership and cutoffs, duplicate suppression, dependency buffering, contiguous VV advance, logging). There SHALL be no separate, simplified apply path for rejoin: out-of-order post-snapshot ops are buffered, never dropped; ops from evicted authors beyond their cutoff are rejected; ops at or below the snapshot VV are duplicates.
 5. IF an evicted replica rejoins from a snapshot that includes itself in the membership, THE Kernel SHALL recognize that it must create a new incarnation (new Replica ID) because the epoch has advanced.
 6. THE Kernel SHALL NOT require explicit coordination between the snapshot creator and the rejoining replica; snapshot-based rejoin SHALL be safe under network delays and concurrent membership changes.
 7. THE Snapshot SHALL include enough metadata for the Graveyard panel to display the historical state at the time of the snapshot.
@@ -366,7 +390,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 #### Acceptance Criteria
 
 1. THE Test Suite SHALL use **fast-check** to generate randomized operation sequences and network scenarios.
-2. FOR the RGA (Requirement 1), THERE SHALL be a property test verifying that any two replicas applying the same set of operations converge to the same sequence.
+2. FOR the RGA (Requirement 1), THERE SHALL be a property test verifying that any two replicas applying the same set of operations converge to the same sequence. The generators SHALL produce deep and nested scenarios, not only shallow ones: anchor chains of depth ≥ 3 with concurrent siblings at more than one level, and inserts into the middle of an existing sequence (anchor with existing children). The test SHALL also check Subtree Contiguity (Requirement 4) and that a local insert at visible index k lands at visible index k.
 3. FOR Op IDs and logical clocks (Requirement 2), THERE SHALL be property tests verifying:
    - Op IDs are globally unique and deterministically ordered.
    - Lamport clocks are always non-decreasing on each replica.
@@ -376,6 +400,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 6. FOR Missing-Op Exchange and Dependency Buffering (Requirement 6), THERE SHALL be property tests verifying:
    - Under arbitrary message reordering and duplication, all replicas eventually converge.
    - An op arriving before its anchor/target is never lost; it waits in the buffer.
+   - A no-op operation (e.g., two replicas concurrently deleting the same element) is logged, advances the VV, and never stalls later ops from the same replica (Requirement 6.8).
 7. FOR Duplicate Suppression (Requirement 7), THERE SHALL be a property test verifying that duplicate operations do not corrupt state or cause duplicate entries.
 8. FOR Membership Epochs and Fencing (Requirements 9, 10), THERE SHALL be property tests verifying:
    - Evicted-author operations are never applied and do not block the stable frontier.
@@ -438,8 +463,8 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 #### Acceptance Criteria
 
 1. THE Kernel SHALL export a main **`CRDT`** class or factory with these core methods:
-   - `insert(replicaId, anchor, value)` → creates and applies an insert operation
-   - `delete(replicaId, elementId)` → creates and applies a delete operation
+   - `insert(anchorId, value)` → creates and applies an insert operation (the replica ID is fixed by the constructor)
+   - `delete(elementId)` → creates and applies a delete operation (the replica ID is fixed by the constructor)
    - `getSequence()` → returns current sequence (non-deleted elements)
    - `getVV()` → returns current Version Vector
    - `applyOp(op)` → applies a remote operation
@@ -449,13 +474,13 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
    - `onSequenceChanged` — fired when the sequence changes due to local or remote operations
    - `onMembershipChanged` — fired when membership or epoch changes
    - `onGCEvent` — fired when garbage collection reclaims payload (for the Graveyard panel)
-3. OPERATIONS SHALL be **serializable** to JSON (or a simple binary format) so they can be transmitted over the network or stored. **[PROPOSED]** JSON with `{ type, replicaId, seq, anchor, value, timestamp?, epoch? }` schema.
+3. OPERATIONS SHALL be **serializable** to JSON (or a simple binary format) so they can be transmitted over the network or stored. **[PROPOSED]** JSON with `{ id, type, replicaId, lamport, anchor?, target?, value?, epoch? }` schema, where `id` is the OpIdKey string `"${replicaId}:${seq}"`, `anchor` is used by inserts and `target` by deletes. There is no wall-clock timestamp field.
 4. THE Kernel SHALL provide query methods:
    - `isElementDeleted(elementId)` → boolean
    - `isCausallyStable(opId)` → boolean
    - `getStableFrontier()` → Version Vector
-   - `getMembershipView()` → { activeReplicas, epoch }
-   - `getGCStats()` → { bytesReclaimed, tombstonesRetained, reclaimableOps }
+   - `getMembershipView()` → { activeMembers, evictedMembers (replicaId → cutoff), epoch }
+   - `getGCStats()` → { tombstoneCount, payloadsReclaimed, bytesSaved, replicasEvicted, stableFrontier }
 5. THE Kernel SHALL NOT expose internal data structures directly; all access is through these public methods.
 6. ERRORS SHALL be represented consistently (e.g., custom exception types, not bare strings).
 
@@ -516,7 +541,7 @@ The CRDT Kernel is a small, educational, from-scratch implementation of a Confli
 
 1. **Network Partition**: If the coordinator is unreachable, replicas continue to operate locally (all ops succeed locally). Stable frontier does not advance until coordinator is reachable (designed behavior, not a bug).
 2. **Evicted Replica**: An evicted replica recognizes it is no longer active and stops applying its own ops. It can rejoin with a new incarnation (new Replica ID).
-3. **Stale Operation**: An operation from an evicted or stale-epoch peer is silently rejected (no error thrown); the kernel remains in a consistent state.
+3. **Stale Operation**: An edit operation from an evicted author beyond its cutoff (or from a non-member) is silently rejected, and a control message from a non-active or stale-epoch sender receives a `rejected` response (no error thrown in either case); the kernel remains in a consistent state.
 4. **Out-of-Order Operations**: Buffered until contiguous; no data loss.
 
 ---

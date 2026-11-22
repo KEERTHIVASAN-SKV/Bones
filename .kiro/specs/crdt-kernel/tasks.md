@@ -89,7 +89,8 @@ Applications (KER-078 to KER-080)
 
 - [ ] 4. **Shared Types and Interfaces** (KER-004)
   - Create `src/types.ts` with all core interfaces:
-    - `OpId`, `Element<T>`, `Operation<T>`, `VersionVector`, `MembershipView`, `Snapshot<T>`, `OperationBuffer`
+    - `OpIdKey` (string `` `${replicaId}:${seq}` ``, never an object), `Element<T>` (includes `anchor`), `Operation<T>` (`id`, `anchor`, `target`; no separate `seq`), `VersionVector`, `MembershipView` (`activeMembers`, `evictedMembers` as replicaId → cutoff, `epoch`), `Snapshot<T>` (no wall-clock field), `OperationBuffer`
+    - Source of truth: `kernel/src/types.ts` and the Type Mapping table in `.kiro/steering/tech.md`
   - Include JSDoc comments for all interfaces
   - Export types in `src/index.ts`
   - **Acceptance Criteria**:
@@ -104,9 +105,10 @@ Applications (KER-078 to KER-080)
 - [ ] 5. **Utility Functions and Helpers** (KER-005)
   - Create `src/utils.ts` with helpers:
     - `compareOpIds(a, b)`: lexicographic comparison
-    - `opId(op)`: extract Op ID from Operation
+    - (`opId(op)` is obsolete: `Operation.id` already is the `OpIdKey`)
+    - `stableStringify(value)`: deterministic JSON (keys sorted at every level; rejects Map/Set)
     - `serializeOp(op)`: deterministic JSON serialization
-    - `deserializeOp(json)`: parse operation
+    - `deserializeOp(json)`: parse and VALIDATE operation (trust boundary; throws on malformed input)
     - `buildOpIndex(rga)`: map OpId → index
     - `estimatePayloadSize(value)`: rough estimate
   - Create `src/events.ts` with event emitter logic (simple publish-subscribe)
@@ -127,42 +129,46 @@ Applications (KER-078 to KER-080)
 
 - [ ] 6. **RGA Data Structure and Core Insert Logic** (KER-006)
   - Create `src/rga.ts` with:
-    - RGA state (array of Elements with Op IDs)
-    - `insert(anchorId, value)` function: create insert operation
-    - `applyInsert(rga, op)` function: apply insert to RGA
-    - Op ID ordering for deterministic conflict resolution
+    - `RGAState`: `elements: Map<OpIdKey, Element>` plus `children: Map<OpIdKey | 'HEAD', OpIdKey[]>` kept sorted newest-first (design.md Algorithm 1). The RGA is a TREE, not a flat array; do NOT implement the insert as a flat array scan.
+    - `insert(anchorId, value)` function: create insert operation (`id`, `anchor`, `lamport`)
+    - `applyInsert(rga, op)` function: create the element (storing its `anchor`) and insert its id into the parent's child list, skipping siblings that are newer
+    - Sibling key: `(lamport, replicaId)`, lamport numeric first, then replicaId by code unit (no `localeCompare`); higher key = newer = earlier in the child list
     - Anchor resolution logic (undefined = HEAD)
   - Ensure deterministic ordering for concurrent inserts
   - **Acceptance Criteria**:
     - Insert returns Operation with correct Op ID
-    - Concurrent inserts to same anchor order by Op ID consistently
-    - Inserted element appears in correct position
+    - Concurrent inserts to same anchor order newest-first by `(lamport, replicaId)` consistently
+    - A local insert after anchor A lands immediately after A, before A's existing children (insert into the middle of a sequence works)
+    - Element stores its `anchor`
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-004, KER-005
-  - **Validation**: Unit test: insert at various anchors; verify position matches Op ID sort order
+  - **Validation**: Unit test: insert at various anchors; verify sibling order is newest-first; insert in the middle lands right after its anchor; nested concurrent inserts (depth ≥ 3) keep every subtree contiguous
 
 - [ ] 7. **RGA Delete Logic and Tombstones** (KER-007)
-  - Implement `delete_(elementId, replicaId)` function: create delete operation
-  - Implement `applyDelete(rga, op)` function: mark element as deleted (tombstone)
-  - Track deletion with `deletedAt` Op ID
+  - Implement `delete_(elementId, replicaId)` function: create delete operation (`id`, `target`, `lamport`)
+  - Implement `applyDelete(state, op)` function: mark element as deleted (tombstone); returns whether the element changed (false for a no-op)
+  - ALWAYS record the delete op in `deleteOps[target]`, even when it is a no-op (Stage 1 GC reclaims when ANY delete op of the element is stable)
+  - Track deletion with `deletedAt` = the SMALLEST delete Op ID applied so far (code-unit order), so concurrent deletes give identical state on every replica
   - Ensure tombstones are retained for structural integrity
   - **Acceptance Criteria**:
     - Delete marks element as deleted without removing it
     - Deleted elements remain as structural anchors
-    - Re-deleting same element is idempotent
+    - Re-deleting same element is idempotent for visible state, is recorded in `deleteOps`, and never changes `deletedAt` to a larger Op ID
+    - Two replicas applying the same two concurrent deletes in opposite orders end with identical `deletedAt`
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-006
   - **Validation**: Unit test: delete → verify tombstone; verify anchor still works
 
 - [ ] 8. **RGA Sequence Traversal and Querying** (KER-008)
-  - Implement `getSequence(rga)` function: return only non-deleted elements
+  - Implement `traverse(rga)` / `getSequence(rga)`: ITERATIVE depth-first pre-order traversal of the anchor tree (explicit stack, no recursion); `getSequence` returns only non-deleted elements
   - Implement `isElementDeleted(rga, elementId)` function: check deletion status
-  - Implement `buildOpIndex(rga)` function: create map for quick lookups
+  - Reuse `buildOpIndex(elements)` from `utils.ts` (already implemented in KER-005) for index lookups over the traversal order
   - Support efficient anchor resolution and position queries
   - **Acceptance Criteria**:
     - `getSequence()` returns only visible elements in correct order
+    - A 50,000-element chain (each insert anchored on the previous one) traverses without a stack overflow
     - `isElementDeleted()` correctly identifies tombstones
     - OpIndex is accurate and consistent
   - **Effort**: Small
@@ -171,19 +177,19 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: mixed insert/delete; verify sequence and index consistency
 
 - [ ] 9. **RGA Concurrent Insert Ordering** (KER-009)
-  - Implement deterministic ordering for concurrent inserts targeting same anchor
-  - Use Op ID (replicaId + seq) for consistent tie-breaking with code-unit comparison:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
-  - Ensure tombstones are included in scan when determining insertion position, but are not used as insertion points
-  - Test that two replicas applying same concurrent inserts produce identical order
+  - Implement deterministic ordering for concurrent inserts targeting the same anchor: newest first by `(lamport, replicaId)`, lamport numeric then replicaId by code unit: a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
+  - Tombstones are ordinary tree nodes: they keep their children and may be anchors
+  - Test that two replicas applying the same concurrent inserts, at any nesting depth, produce identical order
   - **Acceptance Criteria**:
     - Same set of concurrent inserts always order the same way
     - Order is deterministic across all replicas (code-unit comparison only)
-    - Tombstones included in position scan but skipped as insertion targets
-    - Property test: any permutation of concurrent inserts converges to identical order
+    - Subtree contiguity: every element's descendants follow it contiguously, even when a concurrent sibling arrives later (regression test: A ← B ← C chain plus concurrent sibling D of B must never produce an order that separates B from C)
+    - Insert anchored on a tombstone is placed in the tombstone's subtree
+    - Property test: any permutation of concurrent inserts, including nested ones (depth ≥ 3), converges to identical order
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-006, KER-008
-  - **Validation**: Unit test: 2+ concurrent inserts → verify Op ID sort order (code-unit only); tombstone scan test; PBT: random insertion order → same final sequence
+  - **Validation**: Unit test: 2+ concurrent inserts → verify newest-first `(lamport, replicaId)` order (code-unit only); subtree-contiguity regression test; tombstone-anchor test; PBT: random insertion order with nested anchors → same final sequence
 
 - [ ] 10. **RGA Payload Reclamation Preparation** (KER-010)
   - Add `payloadReclaimed` flag to Element interface
@@ -232,13 +238,15 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test partial order properties; PBT: verify transitivity over random VVs
 
 - [ ] 13. **Contiguous Prefix Rule Enforcement** (KER-013)
-  - Implement `updateVVWithContiguousPrefix(currentVV, replicaId, seq)` function
-  - Only advance VV entry if all ops 1..seq are contiguous
+  - Implement `advanceContiguous(currentVV, replicaId, seq)` function (design.md Algorithm 4): advance only when `seq === VV[replicaId] + 1`; otherwise return the VV unchanged (gap, or already counted). The VV never decreases.
+  - The orchestrator calls it for EVERY applied op, including no-ops; buffered ops never call it
+  - The contiguity rule is enforced here and in the orchestrator's readiness check (`isReady`); `updateVersionVector` in `utils.ts` is max-based and must NOT be used to advance the VV when applying ops
   - Detect gaps and prevent advancing
   - **Acceptance Criteria**:
     - VV only advances when gap is closed
     - Gaps are detected correctly
     - VV entry is accurate (never exceeds contiguous prefix)
+    - Re-delivering an old seq leaves the VV unchanged (no regression)
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-011
@@ -247,7 +255,7 @@ Applications (KER-078 to KER-080)
 - [ ] 14. **VersionVector Serialization and Cloning** (KER-014)
   - Implement deterministic serialization (JSON with sorted keys)
   - Implement deep cloning for safety
-  - Use code-unit comparison for replicaId ordering in serialization:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
+  - Use code-unit comparison for replicaId ordering in serialization:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
   - Test round-trip (serialize → deserialize = original)
   - **Acceptance Criteria**:
     - Serialization is deterministic (same VV always serializes same, code-unit ordering only)
@@ -268,6 +276,7 @@ Applications (KER-078 to KER-080)
     - `getOpsByReplica(log, replicaId)` function: filter by replica
     - Maintain log as append-only (no mutations)
   - Ensure deterministic ordering (log order matches application order)
+  - Ops are appended when APPLIED (never while only buffered), including no-op ops, so log order is always a valid causal replay order
   - **Acceptance Criteria**:
     - Ops are stored in append order
     - Log is append-only (no removals/reordering)
@@ -307,8 +316,8 @@ Applications (KER-078 to KER-080)
 
 - [ ] 18. **Membership View and Epoch Tracking** (KER-018)
   - Create `src/membership.ts` with:
-    - `MembershipView` struct (activeReplicas set, epoch number)
-    - `createMembership(activeReplicas)` function: initialize at epoch 0
+    - `MembershipView` (`activeMembers` set, `evictedMembers` map replicaId → cutoff, `epoch` number)
+    - `createMembership(activeMembers)` function: initialize at epoch 0 with no evicted members
     - `getMembership()` function: query current membership
     - `getEpoch()` function: query current epoch
   - Ensure epoch starts at 0 and increments on changes
@@ -323,29 +332,34 @@ Applications (KER-078 to KER-080)
 
 - [ ] 19. **Membership Updates and Eviction** (KER-019)
   - Implement `addReplica(membership, replicaId)` function: add replica, increment epoch
-  - Implement `removeReplica(membership, replicaId)` function: evict replica, increment epoch
+  - Implement `removeReplica(membership, replicaId, cutoff)` function: evict replica (move it to `evictedMembers` with its cutoff), increment epoch
+  - Implement `applyMembershipView(current, newView)`: install a view published by the coordinator; ignore a view whose epoch is not greater than the current epoch
   - Track eviction epoch and reason (for diagnostics; no wall-clock time inside the kernel)
   - **Acceptance Criteria**:
     - Adding/removing replica increments epoch by 1
-    - Replica ID added/removed from activeReplicas set
+    - Replica ID added to / removed from `activeMembers`; an evicted replica ID is recorded with its cutoff and never returns (a rejoin is a new incarnation with a new ID)
     - Epoch is monotonic (never decreases)
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-018
   - **Validation**: Unit test: add/remove → verify epoch and membership
 
-- [ ] 20. **Stale-Epoch Operation Filtering** (KER-020)
-  - Implement `isOpStaleEpoch(op, currentEpoch)` function: check if op is from stale epoch
+- [ ] 20. **Fencing: Edit Operations by Author + Cutoff, Control Messages by Epoch** (KER-020)
+  - Two SEPARATE mechanisms (requirements.md §10 "Fencing Architecture"); do not conflate them
+  - Implement `isFenced(membership, replicaId, seq)` for EDIT operations: accept if the author is active, OR the author is evicted AND `seq <= cutoff`; reject otherwise (unknown author = reject). The op's `epoch` field is NEVER consulted.
+  - Implement `isControlMessageRejected(membership, senderId, senderEpoch)` for control messages (ack, sync request, membership/frontier update): reject if the sender is not active OR its epoch is lower than the current epoch; the reply carries the current epoch
   - Implement `isReplicaActive(replicaId, membership)` function: check membership
   - Return fencing decision (reject vs. accept)
   - **Acceptance Criteria**:
-    - Ops from epoch < current are marked stale
-    - Ops from evicted replicas are marked stale
+    - Edit ops from an active author are accepted regardless of their `epoch` value
+    - Edit ops from an evicted author with `seq <= cutoff` are accepted; with `seq > cutoff` are rejected
+    - Edit ops from an unknown author are rejected
+    - Control messages from non-active or stale-epoch senders are rejected with the current epoch
     - Fencing is transparent (no error, just rejection)
   - **Effort**: Small
   - **Priority**: MUST
   - **Dependencies**: KER-019
-  - **Validation**: Unit test: stale op → verify rejected; current epoch op → verify accepted
+  - **Validation**: Unit test: evicted-author op beyond cutoff → rejected; at cutoff → accepted; op with a stale `epoch` value from an active author → accepted; control message with stale epoch → rejected
 
 - [ ] 21. **Membership Serialization and Snapshots** (KER-021)
   - Implement `serializeMembership(membership)` function: JSON serialization
@@ -364,6 +378,7 @@ Applications (KER-078 to KER-080)
   - Implement `recordCutoff(replicaId, cutoffSeq)` function: record max applied seq before eviction
   - Implement `isBeyondCutoff(replicaId, seq)` function: check if op seq > cutoff[replicaId]
   - Fencing rule: accept op if author is active OR (author is evicted AND seq <= cutoff[author])
+  - Cutoffs are stored in `MembershipView.evictedMembers`; the cutoff value is supplied by the coordinator (max of the survivors' contiguous applied seq for the target), never derived from time
   - **Acceptance Criteria**:
     - Cutoff is recorded when replica is evicted
     - Operations from evicted replicas beyond cutoff are rejected
@@ -416,10 +431,12 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: op at various positions relative to frontier
 
 - [ ] 27. **GC Statistics and Diagnostics** (KER-026)
-  - Implement `getGCStats(rga)` function: return:
-    - `bytesReclaimed`: total bytes cleared via GC
-    - `tombstonesRetained`: count of retained anchors
-    - `reclaimableOps`: count of ops safe to reclaim (current frontier)
+  - Implement `getGCStats(...)` returning `GCStats` (types.ts):
+    - `tombstoneCount`: deleted elements currently in the structure
+    - `payloadsReclaimed`: how many of them are retained anchors (payload reclaimed)
+    - `bytesSaved`: cumulative estimated bytes freed
+    - `replicasEvicted`: evicted replicas
+    - `stableFrontier`: copy of the frontier when the stats were taken
   - Track stats as RGA is modified
   - **Acceptance Criteria**:
     - Stats are accurate and up-to-date
@@ -435,13 +452,14 @@ Applications (KER-078 to KER-080)
 - [ ] 28. **Snapshot Creation** (KER-027)
   - Create `src/snapshot.ts` with:
     - `createSnapshot(rga, vv, membership, gcStats)` function
-    - Include deep copies of sequence, VV, membership
-    - Add metadata (creator replicaId, logicalIndex derived from kernel state, GC state) — NO wall-clock timestamp (Date.now())
+    - Include deep copies of elements (in traversal order, each with its `anchor`), VV, and membership (active members, evicted members WITH cutoffs, epoch)
+    - Add `replicaId`, `lamportClock` (logical timestamp) and `gcStats` — NO wall-clock timestamp (Date.now())
     - Ensure no shared mutable references
   - **Acceptance Criteria**:
     - Snapshot includes all state needed to bootstrap
     - Deep copies prevent external mutation
-    - Metadata uses logical index from kernel state, not Date.now()
+    - `lamportClock` is the only timestamp; no `Date.now()` anywhere
+    - Evicted members' cutoffs are included so post-snapshot fencing works after restore
     - No Date.now() calls in kernel code
   - **Effort**: Small
   - **Priority**: MUST
@@ -449,12 +467,12 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: create snapshot → verify all fields present; verify no Date.now() calls; mutate original → verify snapshot unchanged
 
 - [ ] 29. **Snapshot Serialization** (KER-028)
-  - Implement `serializeSnapshot(snapshot)` function: JSON serialization with sorted keys
-  - Implement `deserializeSnapshot(json)` function: parse and reconstruct
+  - Implement `serializeSnapshot(snapshot)` function: deterministic JSON via `stableStringify`. Convert `Map`/`Set` fields (vv, membership) to plain objects/sorted arrays first: `JSON.stringify` alone turns them into `{}` and silently loses data
+  - Implement `deserializeSnapshot(json)` function: parse, VALIDATE (trust boundary), and rebuild the Map/Set fields
   - Ensure deterministic serialization
   - **Acceptance Criteria**:
     - Serialization is deterministic
-    - Round-trip recovers original snapshot
+    - Round-trip recovers original snapshot, including Map/Set fields (vv, membership) and `serialize(deserialize(json)) === json`
     - Suitable for storage/transmission
   - **Effort**: Small
   - **Priority**: MUST
@@ -462,14 +480,13 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: serialize → deserialize → verify identical
 
 - [ ] 30. **Snapshot Rejoin and State Recovery** (KER-029)
-  - Implement `rejoinFromSnapshot(snapshot, postSnapshotOps)` function
-  - Initialize RGA, VV, membership from snapshot
-  - Apply post-snapshot ops with deduplication and causal ordering
-  - Verify convergence with continuously-connected replica
+  - Implement `restoreFromSnapshot(snapshot)` (design.md Algorithm 8): rebuild the RGA tree from the elements' anchors (appending in traversal order preserves newest-first child lists), VV, membership with cutoffs, and Lamport clock; start with an empty buffer and log
+  - Rejoin = restore + feeding EVERY post-snapshot op through the normal `applyOp` pipeline (KER-031). There must be NO separate, simplified apply path for rejoin. The composition lives in the CRDT class (`CRDT.fromSnapshot(snapshot, replicaId?)`, KER-033); a returning evicted replica passes a NEW replicaId
   - **Acceptance Criteria**:
-    - Rejoined replica state matches continuously-connected replica
-    - Post-snapshot ops applied in correct order
-    - Deduplication prevents duplicate application
+    - Restored state (sequence, VV, membership, Lamport clock) equals the snapshotted replica's state
+    - Post-snapshot ops that arrive out of order are buffered, not dropped
+    - Post-snapshot ops from an evicted author beyond its cutoff are rejected
+    - Ops at or below the snapshot VV are suppressed as duplicates (including non-contiguous redelivery)
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-026, KER-006
@@ -498,13 +515,15 @@ Applications (KER-078 to KER-080)
     - `insert(anchorId, value)` → Operation
     - `delete(elementId)` → Operation
     - `applyOp(op)` → void (with dependency buffering)
-  - Handle duplicate suppression, fencing, buffering
-  - Update VV, OpLog, emit events
+  - Follow design.md Algorithm 3 exactly: (1) fence by author + cutoff, (2) drop duplicates (`seq <= VV[replica]`, or already buffered), (3) buffer if not ready (previous seq, anchor, or target missing), (4) apply, then unblock with an ITERATIVE work queue (no recursive `applyOp`); re-check fencing for buffered ops before applying them
+  - For EVERY applied op, including no-ops (e.g., delete of an already-deleted element): append to OpLog, advance the VV via `advanceContiguous`, update the Lamport clock. Only the `sequenceChanged` event depends on whether state actually changed
   - **Acceptance Criteria**:
     - Insert/delete create operations and update state
     - applyOp handles out-of-order ops with buffering
     - Duplicates are suppressed
-    - Stale ops are rejected
+    - Ops from non-active authors beyond their cutoff are rejected (by author, not by epoch)
+    - A no-op delete (two replicas concurrently delete the same element) does not stall later ops from that replica: the VV advances past it and the next op applies
+    - A chain of 10,000 mutually dependent buffered ops, delivered in reverse order, unblocks without a stack overflow and in well under a second (unblocking looks up only the directly affected ops via `buffer.waiting` and the author's next seq; it must not rescan the whole buffer after each applied op, which took ~20 s in a prototype)
   - **Effort**: Large
   - **Priority**: MUST
   - **Dependencies**: KER-006, KER-007, KER-013, KER-020
@@ -518,7 +537,7 @@ Applications (KER-078 to KER-080)
     - `isElementDeleted(elementId)` → boolean
     - `isCausallyStable(opId)` → boolean
     - `getStableFrontier()` → VersionVector
-    - `getGCStats()` → { bytesReclaimed, tombstonesRetained, reclaimableOps }
+    - `getGCStats()` → `GCStats` { tombstoneCount, payloadsReclaimed, bytesSaved, replicasEvicted, stableFrontier }
   - All methods are read-only, non-mutating
   - **Acceptance Criteria**:
     - All query methods return correct values
@@ -535,7 +554,7 @@ Applications (KER-078 to KER-080)
     - `off(event, callback)`: unregister listener
     - Emit events: `'sequenceChanged'`, `'membershipChanged'`, `'gcEvent'`
   - Implement methods:
-    - `updateMembership(activeReplicas)` → increment epoch if changed
+    - `updateMembership(newView)` → install the coordinator's view (active members, evicted members with cutoffs, epoch); ignore a non-increasing epoch; then reject buffered ops that are now fenced and drain the buffer
     - `updateStableFrontier(frontier)` → trigger GC, emit event
     - `snapshot()` → Snapshot
     - `rejoinFromSnapshot(snapshot)` → void
@@ -699,7 +718,8 @@ Applications (KER-078 to KER-080)
   - Test applyOp with out-of-order operations
   - Test dependency buffering and unblocking
   - Test duplicate suppression
-  - Test stale epoch fencing
+  - Test author + cutoff fencing (evicted author at/below cutoff accepted, beyond cutoff rejected, `op.epoch` ignored)
+  - Test no-op operations (concurrent duplicate delete) advance the VV and do not stall later ops
   - Test membership updates
   - **Acceptance Criteria**:
     - Out-of-order ops handled correctly
@@ -764,6 +784,8 @@ Applications (KER-078 to KER-080)
     - 100+ iterations pass
     - Shrinking produces minimal failing examples
     - Coverage of edge cases (empty, concurrent)
+    - Generators produce DEEP scenarios: anchor chains of depth ≥ 3 with concurrent siblings at more than one level, and inserts into the middle of existing sequences (shallow-only generators would not catch subtree-ordering bugs)
+    - Checks subtree contiguity and that a local insert at visible index k lands at visible index k
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-033, KER-034, KER-041
@@ -823,6 +845,7 @@ Applications (KER-078 to KER-080)
   - Generate out-of-order operation sequences
   - Verify VV only advances when prefix is contiguous
   - Verify gaps are detected
+  - Include no-op operations (concurrent duplicate deletes): they advance the VV like any applied op
   - **Acceptance Criteria**:
     - 100+ iterations pass
     - Contiguity rule always maintained
@@ -834,7 +857,7 @@ Applications (KER-078 to KER-080)
 - [ ] 54. **PBT - Missing Operation Recovery (Property 7)** (KER-54)
   - Generate operations arriving out of order
   - Verify all replicas eventually apply them correctly
-  - Verify no deadlock or permanent gaps
+  - Verify no deadlock or permanent gaps (including after concurrent duplicate deletes)
   - **Acceptance Criteria**:
     - 100+ iterations pass
     - Eventual delivery guaranteed
@@ -879,13 +902,13 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 58. **PBT - Stale-Epoch Fencing (Property 11)** (KER-58)
-  - Generate operations from stale-epoch replicas
+- [ ] 58. **PBT - Evicted-Author Fencing (Property 11)** (KER-58)
+  - Generate edit operations from evicted and unknown authors, some at or below and some beyond the cutoff, with arbitrary `epoch` values
   - Verify all are rejected, not applied
   - Verify state and VV unchanged
   - **Acceptance Criteria**:
     - 100+ iterations pass
-    - Stale ops never applied
+    - Ops beyond the cutoff (and ops from unknown authors) never applied; ops at or below the cutoff are applied; `epoch` has no effect
   - **Effort**: Medium
   - **Priority**: MUST
   - **Dependencies**: KER-034, KER-042
@@ -932,7 +955,7 @@ Applications (KER-078 to KER-080)
 - [ ] 62. **PBT - Snapshot Fidelity (Property 15)** (KER-62)
   - Generate operation sequences
   - Take snapshot at random point
-  - Apply post-snapshot ops in various orders
+  - Apply post-snapshot ops through `applyOp` in various orders, with duplicates and with ops from authors evicted after the snapshot
   - Verify convergence with continuously-connected replica
   - **Acceptance Criteria**:
     - 100+ iterations pass
@@ -1032,7 +1055,8 @@ Applications (KER-078 to KER-080)
   - Generate operations
   - Evict one replica (trigger membership change, epoch increment)
   - Verify:
-    - Evicted replica's new ops are rejected
+    - Evicted replica's new ops (beyond the cutoff) are rejected
+    - Eviction is two-phase: it stays pending until every survivor has backfilled the target's ops up to the cutoff and sent `evict-confirm`; a survivor missing some ops holds the stable frontier back until it catches up
     - Stable frontier advances (no longer blocked)
     - Remaining replicas continue converging
   - **Acceptance Criteria**:
@@ -1173,6 +1197,8 @@ Applications (KER-078 to KER-080)
     - Broadcast frontier updates to replicas
     - Track stalled/zombie peers in Graveyard panel (detection only, no automatic timeout-based eviction)
     - Provide manual eviction via "Exorcise" UI action — only operator can trigger eviction
+    - Run the two-phase eviction protocol (requirements.md §10.3, design.md "Eviction Protocol"): `evict-prepare` → cutoff = max(replies) → publish membership (pending) → survivors backfill and send `evict-confirm` → complete only when ALL survivors confirmed. Re-send backfill requests while pending; list non-confirming members as stalled for a MANUAL Exorcise (never evict automatically). Retries/timers live here, not in the kernel
+    - Reject control messages (acks, sync requests) from non-active or stale-epoch senders with the current epoch
     - Broadcast membership updates when eviction is triggered
   - Simple HTTP or WebSocket API
   - **Acceptance Criteria**:
@@ -1286,6 +1312,7 @@ All tasks must respect these dependencies:
 - **Documentation is Parallel**: KER-070 to KER-073 can start once design is final (doesn't block implementation)
 - **Priority**: MUST tasks (core kernel) are never cut; optional cuts in order: WebRTC (KER-078) → Coordinator (KER-077) → BroadcastChannel (KER-074) → IndexedDB (KER-075)
 - **BroadcastChannel (KER-074)** is a DECIDED Should-have for multi-tab sync demo; do not cut before Transport layer is demonstrated
+- **Spec corrections applied (correctness review)**: RGA is an anchor tree with iterative DFS (KER-006 to KER-009); no-op ops are applied ops that advance the VV (KER-031); buffer unblocking is an iterative queue (KER-031); two separate fencing mechanisms (KER-020); two-phase eviction with a confirm barrier (KER-077); snapshot rejoin goes through `applyOp` (KER-029/033). Source of truth for names and types: `kernel/src/types.ts` and `.kiro/steering/tech.md`
 - **Graveyard Panel** (visual in KER-079 and KER-080) is the centerpiece of the Design criterion; prioritize its implementation and UX polish
 
 ## Acceptance and Sign-Off

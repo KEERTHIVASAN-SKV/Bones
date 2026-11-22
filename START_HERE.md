@@ -126,7 +126,12 @@ Work through each module in dependency order (see `tasks.md` waves 1–4):
 | **Fencing** | Author + cutoff, NOT epoch | Simpler, more direct, epoch is diagnostic-only |
 | **Frontier** | min(active members' VVs) | Ensures no blocked GC while active |
 | **GC Strategy** | Stage 1 only (payload reclaim, keep anchors) | Simpler than Stage 2; anchors preserve structure |
-| **RGA Sort** | Ascending by (lamport, replicaId) | Deterministic concurrent ordering |
+| **RGA structure** | Anchor TREE; sequence = iterative depth-first traversal | A flat-array scan can split a subtree; the tree keeps descendants contiguous |
+| **RGA sibling order** | **Newest first** by `(lamport, replicaId)` (lamport numeric, then replicaId by code unit) | A local insert becomes the first child of its anchor, so it lands right after it (Req 1.8). An oldest-first order would put a mid-sequence insert after the anchor's existing children |
+| **No-op ops** | Applied: logged, advance the VV | Otherwise one duplicate delete stalls every later op from that replica |
+| **Fencing** | Edits: author + cutoff. Control messages: epoch + membership | Two separate mechanisms (requirements.md §10) |
+| **Eviction** | Two-phase: publish (pending) → survivors backfill + `evict-confirm` → complete | No survivor is left with a permanent gap |
+| **Source of truth for types** | `kernel/src/types.ts` + `.kiro/steering/tech.md` (Type Mapping table) | design.md is synced to them |
 
 ---
 

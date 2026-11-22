@@ -115,3 +115,19 @@ This ensures Phase 1 output is correct and won't cause rework in Phases 2–5.
 
 **Status**: ✅ Ready for Phase 2  
 **Next Task**: KER-006 (Lamport clock implementation)
+
+---
+
+## Correction (2026-11-22, after independent verification)
+
+The summary above was premature. An independent review found Phase 1 incomplete, and the figures above (line counts, "7/7 tests", "all Phase 1 tasks completed") described the first pass only. After the follow-up work, the actual state is:
+
+- `utils.ts`: now has all KER-005 helpers (`serializeOp`, `deserializeOp` with input validation, `stableStringify`, `buildOpIndex`, `estimatePayloadSize`). `compareVersionVectors` now returns `'equal'` for equal vectors (it previously returned `'before'`).
+- `types.ts`: `Element.anchor`, `OperationBuffer` added; `Snapshot.createdAt` removed; `Snapshot.membership` is a full `MembershipView` (with cutoffs).
+- `events.ts`: no `console` use; optional `onError` handler; JSDoc corrected.
+- `tsconfig.json`: `"DOM"` removed from `lib` (kernel is pure).
+- `.eslintrc.cjs` added; `npm run lint` passes.
+- Tests: `setup.test.ts`, `utils.test.ts`, `events.test.ts`; 31 tests pass; `npm run build` and `npm run lint` are clean.
+- Specs (`requirements.md`, `design.md`, `tasks.md`, `tech.md`) were updated for the correctness review; see the addendum in `SPEC_REVIEW_FIXES_APPLIED.md`.
+
+The remark below that `design.md` is stale on `OpIdKey` no longer applies: design.md was synced to `types.ts`.

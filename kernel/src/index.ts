@@ -13,9 +13,10 @@ export type {
   VersionVector,
   MembershipSet,
   MembershipEpoch,
+  MembershipView,
+  OperationBuffer,
   GCStats,
   Snapshot,
-  MembershipView,
 } from './types.js';
 
 // Utility functions
@@ -32,10 +33,16 @@ export {
   deserializeVersionVector,
   isValidReplicaId,
   isValidSequence,
+  stableStringify,
+  serializeOp,
+  deserializeOp,
+  buildOpIndex,
+  estimatePayloadSize,
 } from './utils.js';
 
 // Event emitter
 export { EventEmitter } from './events.js';
+export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 
 // Main CRDT class (to be implemented in later tasks)
 // export { CRDT } from './crdt.js';

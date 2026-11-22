@@ -11,7 +11,12 @@ The CRDT Kernel is a deterministic, pure TypeScript implementation of a Replicat
 - **API Simplicity**: Clean public interface hiding implementation complexity
 - **Educational Value**: Well-documented, from-scratch implementation suitable for learning
 
-**Implementation Note**: When buffered operations are unblocked (e.g., a gap fills), use an **iterative work queue** rather than recursion to avoid stack overflow. See Algorithm 3 (applyOp, Unblock Buffered Operations) for details.
+**Implementation Notes**:
+- **Source of truth for names and types**: `kernel/src/types.ts` and `.kiro/steering/tech.md` (see its "Type Mapping" table). This document uses those names (`OpIdKey`, `anchor`, `target`, `activeMembers`, ...).
+- **RGA is a tree**: each element hangs off its anchor; sequence order is an iterative depth-first traversal with siblings ordered newest-first. See Algorithm 1.
+- **Unblocking buffered operations** uses an **iterative work queue**, never recursion. See Algorithm 3.
+- **No-op operations are applied operations**: they are logged and advance the VV even when they change no state. See Algorithm 3.
+- **Two separate fencing mechanisms**: edit operations are fenced by author + cutoff; control messages by epoch + membership. See requirements.md §10 "Fencing Architecture".
 
 ---
 
@@ -22,7 +27,7 @@ The CRDT Kernel is composed of eight core modules that work together to provide 
 ### Module Overview
 
 1. **Lamport Clock Module**: Tracks logical time for each replica; each op carries a Lamport timestamp computed as `max(local_clock, received_max) + 1`.
-2. **RGA Module**: Maintains the replicated growable array data structure, handling insert/delete operations and deterministic conflict resolution through `(lamport, replicaId)` ordering.
+2. **RGA Module**: Maintains the replicated growable array as an anchor tree, handling insert/delete operations and deterministic conflict resolution by ordering siblings newest-first on `(lamport, replicaId)`; the sequence is a depth-first traversal of the tree.
 3. **VersionVector (VV) Module**: Tracks causal dependencies using contiguous Version Vectors; enables dependency detection and stable frontier computation.
 4. **OpLog Module**: Maintains an append-only log of operations; supports deduplication and per-replica querying.
 5. **Membership Module**: Manages active replica sets and membership epochs with eviction cutoffs; enables membership-based fencing and safe garbage collection.
@@ -113,39 +118,36 @@ CRDT Coordinator (orchestrator)
 
 This section defines the core data structures used throughout the CRDT Kernel. All data models are immutable or use copy-on-write semantics to maintain determinism and enable efficient testing.
 
-### OpId (Unique Operation Identifier)
+### OpIdKey (Unique Operation Identifier)
 
 ```typescript
-interface OpId {
-  replicaId: string;  // Format: "${siteId}.${incarnation}" (e.g., "abc123.0")
-  seq: number;        // Monotonically increasing sequence number from this replica
-}
+// Canonical Op ID: ALWAYS this string, never an object. Used directly as Map keys,
+// Set members, and in serialization. Replica ID format: "${siteId}.${incarnation}".
+type OpIdKey = `${string}:${number}`;   // e.g. "abc123.0:42"
 
-// Lexicographic comparison (used in RGA ordering)
-function compareOpIds(a: OpId, b: OpId): number {
-  if (a.replicaId !== b.replicaId) {
-    return a.replicaId < b.replicaId ? -1 : a.replicaId > b.replicaId ? 1 : 0;
-  }
-  return a.seq - b.seq;
-}
+// Helpers (kernel/src/utils.ts)
+//   createOpId(replicaId, seq): OpIdKey
+//   parseOpId(id): { replicaId, seq } | null     (splits on the LAST ':')
+//   compareOpIds(a, b): -1 | 0 | 1                (plain code-unit string comparison)
 ```
 
 **Invariants:**
 - No two operations from the same replica share the same `seq`
 - Op IDs are globally unique across all replicas
-- Op IDs establish a total order (deterministically sortable)
+- Op IDs establish a total order (deterministically sortable) via string comparison
+- RGA sibling order does NOT use `compareOpIds`; it uses the key `(lamport, replicaId)` (see Algorithm 1)
 
 ### Element (Sequence Item)
 
 ```typescript
-interface Element<T = any> {
-  id: `${string}:${number}`;    // Key in format "${replicaId}:${seq}"; globally unique identifier
-  value?: T;                     // Payload data (null/undefined if deleted)
+interface Element<T = unknown> {
+  id: OpIdKey;                   // Op ID of the insert that created it; globally unique
+  anchor: OpIdKey | undefined;   // Parent in the RGA tree (undefined = HEAD); never changes
+  lamport: number;               // Lamport clock of the insert
+  value?: T;                     // Payload (undefined once reclaimed)
   deleted: boolean;              // True if marked as deleted (tombstone)
-  deletedAt?: `${string}:${number}`;  // Key of delete operation (if deleted)
-  lamport: number;               // Lamport clock of this element
-  payloadReclaimed: boolean;      // True if payload was GC'd (retained anchor)
-  epoch?: number;                // Epoch when this element was created/deleted
+  deletedAt?: OpIdKey;           // SMALLEST Op ID among applied deletes of this element (deterministic across replicas)
+  payloadReclaimed: boolean;     // True if payload was GC'd (retained anchor)
 }
 ```
 
@@ -153,26 +155,25 @@ interface Element<T = any> {
 - If `deleted === true`, the element is a tombstone and invisible to user traversal
 - If `payloadReclaimed === true`, `value` is no longer accessible (GC'd)
 - If `payloadReclaimed === false` and `deleted === false`, `value` is the active payload
+- `anchor` is set when the element is created and never changes; a child's `lamport` is always greater than its parent's (Lamport causality)
 
 ### Operation (Op)
 
 ```typescript
-type OperationType = 'insert' | 'delete';
-
-interface Operation<T = any> {
-  type: OperationType;
-  replicaId: string;          // Replica that created this op
-  seq: number;                // Sequence number (part of Op ID)
+interface Operation<T = unknown> {
+  id: OpIdKey;                // "${replicaId}:${seq}"; seq = parseOpId(id).seq
+  type: 'insert' | 'delete';
+  anchor?: OpIdKey;           // insert: element after which to insert (undefined = HEAD)
+  target?: OpIdKey;           // delete: element to delete
+  value?: T;                  // insert only
   lamport: number;            // Lamport clock timestamp
-  value?: T;                  // Payload (for inserts)
-  anchorId?: `${string}:${number}`;  // Key of element after which to insert (undefined = HEAD); format "${replicaId}:${seq}"
-  elementId?: `${string}:${number}`;  // Key of element to delete; format "${replicaId}:${seq}"
-  epoch?: number;             // Membership epoch when created
+  replicaId: string;          // Author; equals the replica part of id
+  epoch?: number;             // Diagnostic only; NEVER used for fencing
 }
 
-// Computed Op ID
-function opId(op: Operation): OpId {
-  return { replicaId: op.replicaId, seq: op.seq };
+// There is no separate `seq` field and no opId() converter: op.id IS the Op ID.
+function seqOf(op: Operation): number {
+  return parseOpId(op.id)!.seq;
 }
 ```
 
@@ -182,7 +183,7 @@ function opId(op: Operation): OpId {
 type VersionVector = Map<string, number>;  // replicaId -> contiguous sequence number
 
 // VV Comparison: partial order
-function isVVLessOrEqual(vv1: VV, vv2: VV): boolean {
+function isVVLessOrEqual(vv1: VersionVector, vv2: VersionVector): boolean {
   for (const [replicaId, seq] of vv1.entries()) {
     if ((vv2.get(replicaId) ?? 0) < seq) {
       return false;
@@ -192,7 +193,7 @@ function isVVLessOrEqual(vv1: VV, vv2: VV): boolean {
 }
 
 // VV Merge: component-wise maximum
-function mergeVV(vv1: VV, vv2: VV): VV {
+function mergeVV(vv1: VersionVector, vv2: VersionVector): VersionVector {
   const merged = new Map(vv1);
   for (const [replicaId, seq] of vv2.entries()) {
     merged.set(replicaId, Math.max(merged.get(replicaId) ?? 0, seq));
@@ -200,64 +201,106 @@ function mergeVV(vv1: VV, vv2: VV): VV {
   return merged;
 }
 
-// VV Increment: advance one replica's entry (used only for contiguous prefix)
-function advanceVV(vv: VV, replicaId: string, newSeq: number): VV {
+// VV Set entry: returns a NEW map. Low-level; it does not check contiguity.
+// The applyOp pipeline must only call it through advanceContiguous (Algorithm 4).
+function advanceVV(vv: VersionVector, replicaId: string, newSeq: number): VersionVector {
   const updated = new Map(vv);
   updated.set(replicaId, newSeq);
   return updated;
 }
 ```
 
-**Contiguous Prefix Rule**: `VV[replicaId]` must equal the highest sequence `seq` from that replica such that all operations `(replicaId, 1), ..., (replicaId, seq)` have been applied.
+**Contiguous Prefix Rule**: `VV[replicaId]` must equal the highest sequence `seq` from that replica such that all operations `(replicaId, 1), ..., (replicaId, seq)` have been **applied**. Buffered operations do not count and never advance the VV. Applied no-op operations do count (Algorithm 3).
+
+**Consequence (duplicate detection)**: because operations from a replica are applied only in contiguous order, the set of applied ops from replica `r` is exactly `{1..VV[r]}`. So "already applied" is simply `seq <= VV[r]`, an O(1) check that needs no separate applied-ops set and survives snapshot restore without materializing one.
 
 ### MembershipView
 
 ```typescript
 interface MembershipView {
-  activeReplicas: Set<string>;  // Set of active replica IDs
-  epoch: number;                 // Current membership epoch
+  activeMembers: Set<string>;            // Active replica IDs
+  evictedMembers: Map<string, number>;   // Evicted replica ID -> cutoff (max seq of its ops still accepted)
+  epoch: number;                         // Current membership epoch
 }
 ```
 
 **Invariants:**
 - Epoch increments by exactly 1 on each membership change
 - Epochs never decrease
-- A replica is active only if its ID is in `activeReplicas`
+- A replica is active only if its ID is in `activeMembers`
+- A replica is in at most one of `activeMembers` and `evictedMembers`; an evicted ID never returns (a rejoin is a new incarnation with a new replica ID)
+
+**Edit-operation fencing** (judged by AUTHOR, not epoch; requirements.md §10.0):
+
+```typescript
+function isFenced(m: MembershipView, replicaId: string, seq: number): boolean {
+  if (m.activeMembers.has(replicaId)) return false;
+  const cutoff = m.evictedMembers.get(replicaId);
+  return cutoff === undefined || seq > cutoff;   // unknown author, or beyond the cutoff
+}
+```
 
 ### Snapshot
 
 ```typescript
-interface Snapshot<T = any> {
-  sequence: Element<T>[];           // Complete RGA sequence (including tombstones)
-  vv: VersionVector;                // Current VV at snapshot time
-  membership: MembershipView;        // Current membership view at snapshot time
-  metadata: SnapshotMetadata;        // Additional info for diagnostics
+interface Snapshot<T = unknown> {
+  elements: readonly Element<T>[];  // All elements incl. tombstones, in traversal order; each carries its anchor
+  vv: VersionVector;                // VV at snapshot time
+  membership: MembershipView;       // Active members, evicted members with cutoffs, epoch
+  lamportClock: number;             // Logical timestamp (no wall-clock time anywhere in a snapshot)
+  replicaId: string;                // Replica that created the snapshot
+  gcStats?: GCStats;                // For the Graveyard panel (requirements.md §13.7)
+  stableFrontier?: VersionVector;   // Set for rejoin snapshots
 }
+```
 
-interface SnapshotMetadata {
-  replicaId?: string;               // Snapshot creator (for reference)
-  gcStats?: {                        // GC state at snapshot time
-    bytesReclaimed: number;
-    tombstonesRetained: number;
-    reclaimableOps: number;
-  };
-  logicalIndex?: number;            // Logical index or frontier reference (derived from kernel state, not wall-clock)
+### GCStats
+
+```typescript
+interface GCStats {
+  tombstoneCount: number;       // Deleted elements currently in the structure
+  payloadsReclaimed: number;    // Of those, how many are retained anchors (payload reclaimed)
+  bytesSaved: number;           // Cumulative estimated bytes freed
+  replicasEvicted: number;      // Evicted replicas
+  stableFrontier: VersionVector; // Copy of the frontier when the stats were taken
 }
 ```
 
 ### OperationBuffer (Internal)
 
 ```typescript
-// Used to buffer out-of-order operations until dependencies are available
-interface OperationBuffer {
-  buffer: Map<string, Map<number, Operation>>;  // Key: "${replicaId}:${seq}" -> Op
-  missingOps: Map<string, Set<number>>;         // Key: replicaId -> set of missing seqs
+// Buffers operations whose dependencies are not yet applied. Nothing is ever dropped
+// (except an op that becomes fenced while waiting, which is rejected explicitly).
+interface OperationBuffer<T = unknown> {
+  readonly ops: Map<OpIdKey, Operation<T>>;     // Buffered ops keyed by Op ID
+  readonly missing: Map<string, Set<number>>;   // replicaId -> missing seqs (for sync requests)
+  readonly waiting: Map<OpIdKey, Set<OpIdKey>>; // absent anchor/target element -> buffered ops waiting for it
 }
 
-// Check if dependencies are satisfied
-function areDependenciesSatisfied(op: Operation, vv: VersionVector): boolean {
-  const opId = { replicaId: op.replicaId, seq: op.seq };
-  return (vv.get(op.replicaId) ?? 0) >= op.seq - 1;
+// An op is READY when ALL of these hold (checked by Algorithm 3):
+//   1. seq === VV[replicaId] + 1            (all earlier ops from this author are applied)
+//   2. insert: anchor is undefined (HEAD) or the anchor element exists
+//   3. delete: the target element exists
+function isReady<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
+  const seq = seqOf(op);
+  if (seq !== (state.vv.get(op.replicaId) ?? 0) + 1) return false;
+  if (op.type === 'insert') return op.anchor === undefined || state.rga.elements.has(op.anchor);
+  return state.rga.elements.has(op.target!);
+}
+```
+
+### ReplicaState (Internal)
+
+```typescript
+// The mutable state the CRDT orchestrator owns. Algorithms 1-4 and 8 operate on it.
+interface ReplicaState<T> {
+  rga: RGAState<T>;                              // Algorithm 1
+  vv: VersionVector;                             // replaced (copy-on-write) on every advance
+  buffer: OperationBuffer<T>;
+  opLog: Operation<T>[];                         // append-only; applied ops in causal order
+  deleteOps: Map<OpIdKey, Set<OpIdKey>>;         // element -> ALL delete ops targeting it (Algorithm 6)
+  membership: MembershipView;
+  lamportClock: number;
 }
 ```
 
@@ -270,6 +313,7 @@ function areDependenciesSatisfied(op: Operation, vv: VersionVector): boolean {
   /src
     index.ts                     # Main exports
     types.ts                     # Shared interfaces and types
+    lamport.ts                   # Lamport clock
     rga.ts                       # RGA data structure and logic
     vv.ts                        # VersionVector operations
     oplog.ts                     # Operation log
@@ -281,6 +325,7 @@ function areDependenciesSatisfied(op: Operation, vv: VersionVector): boolean {
     events.ts                    # Event emission system
 
   /tests
+    lamport.test.ts              # Lamport clock tests
     rga.test.ts                  # RGA unit and property tests
     vv.test.ts                   # VersionVector tests
     oplog.test.ts                # Operation log tests
@@ -302,288 +347,346 @@ function areDependenciesSatisfied(op: Operation, vv: VersionVector): boolean {
 
 ## Key Algorithms
 
-### Algorithm 1: Insert Operation
+### Algorithm 1: Insert Operation (RGA as an anchor tree)
 
-**Input**: `replicaId`, `anchorId` (optional, format "${replicaId}:${seq}" or undefined for HEAD), `value`, `localClock`, `currentSeq`, `currentEpoch`
-**Output**: `Operation` (to be applied locally and broadcast)
-**Side Effects**: Increments replica's sequence number and Lamport clock
+**Structure.** Every element is a child of its anchor (or of HEAD). The sequence order is the **depth-first pre-order traversal** of this tree. Children of the same parent are kept **newest first** by the key `(lamport, replicaId)`. The position of a new element is found among its parent's children only, never by scanning the flat array: a flat scan that compares keys alone cannot tell a sibling from a descendant, and can place an element inside another sibling's subtree. Example: `A` is a child of HEAD; `B` is a child of `A` with key `(2, r2)`; `C` is a child of `B` with key `(3, r3)`; a concurrent `D` is a child of `A` with key `(2, r4)`. `D` is newer than `B` (same lamport, `r4 > r2`), so the order is `[A, D, B, C]`: `B` and its child `C` stay together. The oldest-first flat scan in an earlier draft of this document produced `[A, B, D, C]`, which separates `C` from its parent `B` (it violates subtree contiguity) and also places an insert in the middle of a sequence after the anchor's existing children instead of right after the anchor.
+
+```typescript
+type ParentKey = OpIdKey | 'HEAD';
+
+interface RGAState<T> {
+  elements: Map<OpIdKey, Element<T>>;   // every element, including tombstones, by Op ID
+  children: Map<ParentKey, OpIdKey[]>;  // parent -> child IDs, ALWAYS sorted newest-first
+}
+
+// Sibling key: lamport (numeric), then replicaId (code-unit). The Op ID string is a final
+// tie-break only so the order stays total even on malformed input; it never decides
+// anything for well-formed ops (lamport strictly increases per replica).
+// Returns > 0 when `a` is NEWER than `b`.
+function compareSiblingKeys<T>(a: Element<T>, b: Element<T>): number {
+  if (a.lamport !== b.lamport) return a.lamport < b.lamport ? -1 : 1;
+  const ra = parseOpId(a.id)!.replicaId;
+  const rb = parseOpId(b.id)!.replicaId;
+  if (ra !== rb) return ra < rb ? -1 : 1;           // code-unit comparison, no localeCompare
+  return compareOpIds(a.id, b.id);
+}
+```
+
+**Local operation creation:**
 
 ```typescript
 function insert<T>(
   replicaId: string,
-  anchorId: string | undefined,  // Key format: "${replicaId}:${seq}" or undefined for HEAD
+  anchor: OpIdKey | undefined,  // undefined = HEAD
   value: T,
-  localClock: number,            // Current Lamport clock for this replica
-  currentSeq: number,            // Current sequence for this replica
+  localClock: number,           // current Lamport clock of this replica
+  currentSeq: number,           // current sequence of this replica
   currentEpoch: number
 ): { operation: Operation<T>; newLamport: number } {
   const newSeq = currentSeq + 1;
   const newLamport = localClock + 1;
-  const op: Operation<T> = {
+  const operation: Operation<T> = {
+    id: createOpId(replicaId, newSeq),
     type: 'insert',
-    replicaId,
-    seq: newSeq,
-    lamport: newLamport,
+    anchor,
     value,
-    anchorId,
-    epoch: currentEpoch,
+    lamport: newLamport,
+    replicaId,
+    epoch: currentEpoch,        // diagnostic only
   };
-  return { operation: op, newLamport };
-}
-
-// Application (local or remote):
-function applyInsert(
-  rga: Element[],
-  op: Operation,
-  opIndex: Map<string, number>,  // Key: "${replicaId}:${seq}" -> index in RGA
-  localClock: number             // Current Lamport clock at receiver
-): { rga: Element[]; changed: boolean; newLamport: number } {
-  // Update local clock
-  const newLamport = Math.max(localClock, op.lamport);
-  
-  const elementKey = `${op.replicaId}:${op.seq}`;
-  const newElement: Element = {
-    id: elementKey,
-    value: op.value,
-    deleted: false,
-    lamport: op.lamport,
-    payloadReclaimed: false,
-    epoch: op.epoch,
-  };
-
-  // Find anchor position (or start if no anchor)
-  let insertAt = 0;
-  if (op.anchorId) {
-    const anchorIndex = opIndex.get(op.anchorId);
-    insertAt = (anchorIndex ?? -1) + 1;
-  }
-
-  // Find correct position by sorting concurrent inserts by (lamport, replicaId)
-  // Scan includes tombstones; insertion proceeds until key(seq[pos]) > key(newElement).
-  // Tombstones are structural anchors and are traversed during position calculation.
-  while (
-    insertAt < rga.length &&
-    compareKeys(rga[insertAt].lamport, rga[insertAt].id, op.lamport, elementKey) < 0
-  ) {
-    insertAt++;
-  }
-
-  // Insert and maintain index
-  rga.splice(insertAt, 0, newElement);
-  updateOpIndex(opIndex, rga);
-
-  return { rga, changed: true, newLamport };
-}
-
-// Compare by (lamport, replicaId) key
-function compareKeys(lamport1: number, id1: string, lamport2: number, id2: string): number {
-  if (lamport1 !== lamport2) return lamport1 < lamport2 ? -1 : 1;
-  // Extract replicaId from id (format: "${replicaId}:${seq}")
-  const rid1 = id1.substring(0, id1.lastIndexOf(':'));
-  const rid2 = id2.substring(0, id2.lastIndexOf(':'));
-  return rid1 < rid2 ? -1 : rid1 > rid2 ? 1 : 0;  // code-unit comparison, no localeCompare
+  return { operation, newLamport };
 }
 ```
 
-**Complexity**: O(n) where n is sequence length (scan for anchor + sort position)
+**Application (local or remote).** Precondition, guaranteed by `isReady` in Algorithm 3: the anchor is HEAD or already present.
 
-**Correctness**: Concurrent inserts with the same anchor are ordered deterministically by `(lamport, replicaId)`, ensuring eventual consistency and a local insert at visible index k lands at visible index k after convergence.
+```typescript
+function applyInsert<T>(rga: RGAState<T>, op: Operation<T>): boolean {
+  if (rga.elements.has(op.id)) return false;   // defensive: never create an element twice
+
+  const element: Element<T> = {
+    id: op.id,
+    anchor: op.anchor,
+    lamport: op.lamport,
+    value: op.value,
+    deleted: false,
+    payloadReclaimed: false,
+  };
+  rga.elements.set(op.id, element);
+
+  // Insert into the parent's child list, newest first: skip siblings that are NEWER.
+  const parent: ParentKey = op.anchor ?? 'HEAD';
+  const siblings = rga.children.get(parent) ?? [];
+  let pos = 0;
+  while (pos < siblings.length && compareSiblingKeys(rga.elements.get(siblings[pos])!, element) > 0) {
+    pos++;
+  }
+  siblings.splice(pos, 0, op.id);
+  rga.children.set(parent, siblings);
+  return true;   // an insert always changes state
+}
+```
+
+**Traversal** (`getSequence` is this, filtered to non-deleted elements). It is iterative, because typing a long string produces a chain as deep as the string and a recursive DFS would overflow the call stack:
+
+```typescript
+function traverse<T>(rga: RGAState<T>): Element<T>[] {
+  const out: Element<T>[] = [];
+  const stack: OpIdKey[] = [];
+  const pushChildrenReversed = (parent: ParentKey) => {
+    const kids = rga.children.get(parent);
+    if (kids) for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);  // first child ends on top
+  };
+  pushChildrenReversed('HEAD');
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    out.push(rga.elements.get(id)!);   // pre-order: parent, then each child's whole subtree
+    pushChildrenReversed(id);
+  }
+  return out;
+}
+```
+
+**Complexity**: `applyInsert` is O(c) for c siblings under the anchor (binary search would make the position search O(log c)); traversal is O(n).
+
+**Correctness**:
+- *Convergence*: the final tree depends only on the set of applied inserts (each element's parent is fixed), and each child list is ordered purely by element keys, not by arrival order; the traversal depends only on the tree. Replicas that applied the same operations therefore produce identical sequences, at any nesting depth.
+- *Subtree contiguity*: pre-order traversal emits an element's entire subtree before its next sibling.
+- *Local insert lands where intended* (Requirement 1.8): a local insert has the highest Lamport value the replica has seen, so it becomes the FIRST child of its anchor and lands immediately after it. To insert at visible index `k`, anchor on the visible element at index `k - 1` (or HEAD for `k = 0`).
 
 ---
 
 ### Algorithm 2: Delete Operation
 
-**Input**: `replicaId`, `elementId` (element key in format "${replicaId}:${seq}"), `currentSeq`, `currentEpoch`, `localClock`
+**Input**: `replicaId`, `target` (element Op ID), `currentSeq`, `currentEpoch`, `localClock`
 **Output**: `Operation` with type 'delete'
 
 ```typescript
 function delete_(
   replicaId: string,
-  elementId: string,           // Key format: "${replicaId}:${seq}"
+  target: OpIdKey,
   currentSeq: number,
   currentEpoch: number,
-  localClock: number           // Current Lamport clock
+  localClock: number
 ): { operation: Operation; newLamport: number } {
   const newSeq = currentSeq + 1;
   const newLamport = localClock + 1;
-  const op: Operation = {
+  const operation: Operation = {
+    id: createOpId(replicaId, newSeq),
     type: 'delete',
-    replicaId,
-    seq: newSeq,
+    target,
     lamport: newLamport,
-    elementId,
+    replicaId,
     epoch: currentEpoch,
   };
-  return { operation: op, newLamport };
+  return { operation, newLamport };
 }
 
-// Application:
-function applyDelete(
-  rga: Element[],
-  op: Operation,
-  opIndex: Map<string, number>,  // Key: "${replicaId}:${seq}" -> index
-  localClock: number             // Current Lamport clock at receiver
-): { rga: Element[]; changed: boolean; newLamport: number } {
-  // Update local clock
-  const newLamport = Math.max(localClock, op.lamport);
-  
-  const idx = opIndex.get(op.elementId!);
-  if (idx === undefined) {
-    // Element not found; buffer this delete until element is applied
-    return { rga, changed: false, newLamport };
-  }
+// Application. Precondition, guaranteed by isReady in Algorithm 3: the target exists.
+// Returns true only if the element transitioned from visible to deleted.
+function applyDelete<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
+  const target = op.target!;
 
-  const element = rga[idx];
+  // ALWAYS record the delete op against its target, even if it turns out to be a no-op:
+  // Stage 1 GC reclaims when ANY delete op of the element is stable (Requirement 12.2).
+  let ops = state.deleteOps.get(target);
+  if (ops === undefined) { ops = new Set(); state.deleteOps.set(target, ops); }
+  ops.add(op.id);
+
+  const element = state.rga.elements.get(target)!;
   if (element.deleted) {
-    // Already deleted; idempotent
-    return { rga, changed: false, newLamport };
+    // No-op: a concurrent/earlier delete already tombstoned it. Keep `deletedAt`
+    // deterministic across replicas: it is the SMALLEST delete Op ID applied so far,
+    // not "whichever arrived first".
+    if (element.deletedAt === undefined || compareOpIds(op.id, element.deletedAt) < 0) {
+      element.deletedAt = op.id;
+    }
+    return false;
   }
 
-  // Mark as deleted (tombstone), retain structural position
-  element.deleted = true;
-  element.deletedAt = `${op.replicaId}:${op.seq}`;
-
-  return { rga, changed: true, newLamport };
+  element.deleted = true;           // tombstone; structural position and children are retained
+  element.deletedAt = op.id;
+  return true;
 }
 ```
 
-**Complexity**: O(1) average (map lookup)
+**Complexity**: O(1) average (map lookups).
 
-**Correctness**: Tombstones remain to allow concurrent inserts to place elements correctly.
+**Correctness**: tombstones stay in the tree, so concurrent inserts anchored on them still place correctly. A repeated or concurrent delete is idempotent for the visible state.
 
 ---
 
 ### Algorithm 3: Apply Remote Operation (with Dependency Buffering)
 
-**Input**: `op` (remote operation), `currentVV`, `buffer`, `membershipView`, `cutoffs`, `rga`, `opIndex`, `appliedOps`
-**Output**: Updated state and/or buffered operations
+**Input**: `state` (a `ReplicaState`), `op`
+**Output**: an `ApplyResult`; `state` is updated in place by the orchestrator (the VV is replaced copy-on-write)
 
 ```typescript
-function applyOp(
-  op: Operation,
-  currentVV: VersionVector,
-  buffer: OperationBuffer,
-  membershipView: MembershipView,
-  cutoffs: Map<string, number>,           // cutoff[replicaId] for evicted replicas
-  rga: Element[],
-  opIndex: Map<string, number>,           // Key: "${replicaId}:${seq}" -> index
-  appliedOps: Map<string, boolean>        // Key: "${replicaId}:${seq}"
-): {
-  applied: boolean;
-  buffered: boolean;
-  fenced: boolean;
-  unblocked: Operation[];
-} {
-  const opKey = `${op.replicaId}:${op.seq}`;
-
-  // 1. Fencing: Judge by AUTHOR, not by epoch
-  const isAuthorActive = membershipView.activeReplicas.has(op.replicaId);
-  const isAuthorEvicted = !isAuthorActive;
-  if (isAuthorEvicted) {
-    const cutoff = cutoffs.get(op.replicaId) ?? 0;
-    if (op.seq > cutoff) {
-      // Evicted replica's op beyond cutoff; reject
-      return { applied: false, buffered: false, fenced: true, unblocked: [] };
-    }
-  }
-
-  // 2. Deduplication
-  if (appliedOps.has(opKey)) {
-    // Already applied; idempotent suppression
-    return { applied: false, buffered: false, fenced: false, unblocked: [] };
-  }
-
-  // 3. Dependency checks
-  const contiguousSeq = currentVV.get(op.replicaId) ?? 0;
-  if (op.seq > contiguousSeq + 1) {
-    // Out of order; buffer it
-    bufferOp(buffer, op);
-    return { applied: false, buffered: true, fenced: false, unblocked: [] };
-  }
-
-  // For INSERT: anchor must be HEAD or already applied
-  if (op.type === 'insert' && op.anchorId) {
-    if (!opIndex.has(op.anchorId)) {
-      // Anchor not applied yet; buffer this insert
-      bufferOp(buffer, op);
-      return { applied: false, buffered: true, fenced: false, unblocked: [] };
-    }
-  }
-
-  // For DELETE: target element must be already applied
-  if (op.type === 'delete') {
-    if (!opIndex.has(op.elementId!)) {
-      // Target not applied yet; buffer this delete
-      bufferOp(buffer, op);
-      return { applied: false, buffered: true, fenced: false, unblocked: [] };
-    }
-  }
-
-  // 4. Apply operation
-  let changed = false;
-  if (op.type === 'insert') {
-    const result = applyInsert(rga, op, opIndex, 0);  // localClock updated separately
-    changed = result.changed;
-  } else if (op.type === 'delete') {
-    const result = applyDelete(rga, op, opIndex, 0);
-    changed = result.changed;
-  }
-
-  if (changed) {
-    appliedOps.set(opKey, true);
-    advanceVV(currentVV, op.replicaId, op.seq);
-  }
-
-  // 5. Unblock buffered operations (re-check all buffered ops)
-  const unblocked: Operation[] = [];
-  const toRetry = Array.from(buffer.buffer.values()).flatMap(m => Array.from(m.values()));
-  for (const bufferedOp of toRetry) {
-    if (!appliedOps.has(`${bufferedOp.replicaId}:${bufferedOp.seq}`)) {
-      // Try to apply this buffered op recursively
-      const result = applyOp(bufferedOp, currentVV, buffer, membershipView, cutoffs, rga, opIndex, appliedOps);
-      if (result.applied) {
-        unblocked.push(bufferedOp);
-        removeBufferedOp(buffer, bufferedOp.replicaId, bufferedOp.seq);
-      }
-    }
-  }
-
-  return { applied: changed, buffered: false, fenced: false, unblocked };
+interface ApplyResult {
+  status: 'applied' | 'buffered' | 'duplicate' | 'fenced';
+  changed: boolean;       // did applying this op (or any op it unblocked) change the sequence?
+  unblocked: OpIdKey[];   // buffered ops that were applied as a consequence of this call
+  fenced: OpIdKey[];      // buffered ops rejected because they became fenced while waiting
 }
+
+function applyOp<T>(state: ReplicaState<T>, op: Operation<T>): ApplyResult {
+  const seq = seqOf(op);
+
+  // 1. Fencing: judge by AUTHOR + cutoff, never by epoch (requirements.md §10.0, mechanism 1)
+  if (isFenced(state.membership, op.replicaId, seq)) {
+    return { status: 'fenced', changed: false, unblocked: [], fenced: [] };
+  }
+
+  // 2. Duplicate suppression. Applied ops from a replica are exactly 1..VV[replica]
+  //    (contiguous prefix rule), so "already applied" is `seq <= VV`. A copy already
+  //    waiting in the buffer is a duplicate too.
+  if (seq <= (state.vv.get(op.replicaId) ?? 0) || state.buffer.ops.has(op.id)) {
+    return { status: 'duplicate', changed: false, unblocked: [], fenced: [] };
+  }
+
+  // 3. Dependencies: previous seq of this author, and anchor (insert) or target (delete).
+  if (!isReady(state, op)) {
+    bufferOp(state, op);               // never dropped
+    return { status: 'buffered', changed: false, unblocked: [], fenced: [] };
+  }
+
+  // 4. Apply, then unblock with an ITERATIVE work queue (no recursion: a long chain of
+  //    dependent ops must not grow the call stack).
+  const queue: Operation<T>[] = [op];
+  const unblocked: OpIdKey[] = [];
+  const fenced: OpIdKey[] = [];
+  let changed = false;
+  for (let head = 0; head < queue.length; head++) {   // index, not shift(): O(1) dequeue
+    const next = queue[head];
+    if (applyReadyOp(state, next)) changed = true;
+    if (next !== op) unblocked.push(next.id);
+    for (const ready of takeReadyFromBuffer(state, next, fenced)) queue.push(ready);
+  }
+  return { status: 'applied', changed, unblocked, fenced };
+}
+
+// Applies one op that is ready and not fenced.
+function applyReadyOp<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
+  const changed = op.type === 'insert' ? applyInsert(state.rga, op) : applyDelete(state, op);
+
+  // ALWAYS, whether or not state changed. A no-op (e.g., a second concurrent delete of the
+  // same element) is still an applied op: if it were skipped, VV[replica] would stay one
+  // short and every later op from that replica (seq + 1 never equals VV + 1) would sit in
+  // the buffer forever.
+  state.opLog.push(op);
+  state.vv = advanceContiguous(state.vv, op.replicaId, seqOf(op));
+  state.lamportClock = Math.max(state.lamportClock, op.lamport);
+
+  return changed;   // used only to decide whether to emit 'sequenceChanged'
+}
+
+// Buffer an op that is not ready, and index the element it is waiting for (if that
+// element has not been applied yet) so that applying the element finds this op directly.
+function bufferOp<T>(state: ReplicaState<T>, op: Operation<T>): void {
+  state.buffer.ops.set(op.id, op);
+  const dependency = op.type === 'insert' ? op.anchor : op.target;
+  if (dependency !== undefined && !state.rga.elements.has(dependency)) {
+    let waiters = state.buffer.waiting.get(dependency);
+    if (waiters === undefined) { waiters = new Set(); state.buffer.waiting.set(dependency, waiters); }
+    waiters.add(op.id);
+  }
+  recomputeMissing(state);
+}
+
+// After `applied` was applied, find the buffered ops it can unblock. Only two things can
+// make a waiting op ready, and each has a direct lookup (no rescan of the whole buffer):
+//   1. the next seq from the same author  -> buffer.ops.get(createOpId(author, seq + 1))
+//   2. ops waiting for the element this op created (if it was an insert) -> buffer.waiting.get(applied.id)
+// Ready ops are removed from the buffer and returned. A candidate that became fenced while
+// it waited (membership changed) is removed and reported in `fenced`: an explicit
+// rejection, not a silent loss.
+function takeReadyFromBuffer<T>(
+  state: ReplicaState<T>,
+  applied: Operation<T>,
+  fenced: OpIdKey[]
+): Operation<T>[] {
+  const candidates = new Set<OpIdKey>();
+  const nextSeqId = createOpId(applied.replicaId, seqOf(applied) + 1);
+  if (state.buffer.ops.has(nextSeqId)) candidates.add(nextSeqId);
+  if (applied.type === 'insert') {
+    const waiters = state.buffer.waiting.get(applied.id);
+    if (waiters !== undefined) {
+      for (const id of waiters) candidates.add(id);
+      state.buffer.waiting.delete(applied.id);
+    }
+  }
+
+  const ready: Operation<T>[] = [];
+  for (const id of candidates) {
+    const buffered = state.buffer.ops.get(id);
+    if (buffered === undefined) continue;            // already taken or fenced earlier
+    if (isFenced(state.membership, buffered.replicaId, seqOf(buffered))) {
+      state.buffer.ops.delete(id);
+      fenced.push(id);
+    } else if (isReady(state, buffered)) {
+      state.buffer.ops.delete(id);
+      ready.push(buffered);
+    }
+    // else: still blocked on its other dependency. It stays buffered and the other
+    // dependency's own trigger (1 or 2 above) will reconsider it.
+  }
+  recomputeMissing(state);
+  return ready;
+}
+
+// Used when the membership changes: reject every buffered op that is now fenced.
+// (A full scan is fine here; membership changes are rare.)
+function purgeFencedBuffered<T>(state: ReplicaState<T>): OpIdKey[] {
+  const fenced: OpIdKey[] = [];
+  for (const [id, buffered] of state.buffer.ops) {   // deleting the current entry while iterating a Map is safe
+    if (isFenced(state.membership, buffered.replicaId, seqOf(buffered))) {
+      state.buffer.ops.delete(id);
+      fenced.push(id);
+    }
+  }
+  recomputeMissing(state);
+  return fenced;
+}
+
+// missing[r] = seqs s with VV[r] < s < (largest buffered seq from r) and (r, s) not buffered.
+function recomputeMissing<T>(state: ReplicaState<T>): void { /* derives state.buffer.missing */ }
 ```
 
-**Complexity**: O(1) for buffering decision; O(b * d) to unblock buffered ops (b = buffered ops, d = dep checks per op)
+**Notes**
+- `isReady` is defined with `OperationBuffer` in Data Models. Readiness only ever becomes true over time (the VV and the element set only grow), so an op that is ready when queued is still ready when applied.
+- Events (orchestrator): emit `sequenceChanged` only when `changed`; emit the diagnostic `bufferUnblocked` when `unblocked` is non-empty.
+- When membership changes (`updateMembership`), call `purgeFencedBuffered` so buffered ops from newly evicted authors beyond their cutoff are rejected. (Membership changes never make an op ready that was not, so nothing needs draining.)
+- The op is appended to the OpLog when it is applied (not when it is merely buffered), so log order is always a valid causal replay order (Requirement 3.3).
 
-**Correctness**: Operations with missing dependencies (contiguous seq, anchor, or target) are never dropped; they remain in buffer until all dependencies are satisfied.
+**Complexity**: O(1) to decide to buffer. Draining examines only the directly unblocked candidates (next seq of the author, ops waiting on the new element), so applying k ops costs O(k) plus the cost of the ops themselves. Why this matters: rescanning the whole buffer after every applied op is O(k · b); a prototype of this design on a 10,000-op dependency chain delivered in reverse order took about 19.6 s with the rescan and about 53 ms with the index.
+
+**Correctness**: operations with missing dependencies are never dropped; they stay in the buffer until every dependency is applied, or until they are explicitly rejected by fencing. Each loop iteration removes one op from the buffer and applies it, so the loop terminates.
 
 ---
 
 ### Algorithm 4: Contiguous Version Vector Update
 
-**Input**: `currentVV`, `replicaId`, `incomingSeq`, `buffer`
-**Output**: Updated VV (only if prefix is contiguous)
+**Input**: `vv`, `replicaId`, `seq` (the seq of an op that has just been applied)
+**Output**: Updated VV (a new Map), or the same VV if it must not move
 
 ```typescript
-function updateVVWithContiguousPrefixRule(
-  currentVV: VersionVector,
-  replicaId: string,
-  incomingSeq: number,
-  buffer: OperationBuffer
-): VersionVector {
-  const currentSeq = currentVV.get(replicaId) ?? 0;
-
-  // Only advance if all operations from 1..incomingSeq are applied or buffered
-  if (incomingSeq > currentSeq + 1) {
-    // Gap detected; wait for missing operations
-    return currentVV;
+function advanceContiguous(vv: VersionVector, replicaId: string, seq: number): VersionVector {
+  const current = vv.get(replicaId) ?? 0;
+  if (seq !== current + 1) {
+    // seq > current + 1: a gap, wait for the missing ops.
+    // seq <= current:    already counted; never move the VV backwards.
+    return vv;
   }
-
-  // Advance to incomingSeq
-  return advanceVV(currentVV, replicaId, incomingSeq);
+  return advanceVV(vv, replicaId, seq);
 }
 ```
 
-**Invariant**: VV[replicaId] is always the highest contiguous sequence from that replica.
+**Invariants**:
+- `VV[replicaId]` is always the highest contiguous seq of **applied** operations from that replica. Buffered operations do not count.
+- It never decreases and never skips a value.
+- It advances for every applied op, including no-ops (Algorithm 3).
+
+**Where the check lives**: `isReady` (seq must equal `VV + 1`) and `advanceContiguous` are used by the orchestrator; `updateVersionVector` in `utils.ts` is max-based and does NOT enforce contiguity, so it must not be used to advance the VV when applying operations (KER-013).
 
 ---
 
@@ -623,13 +726,14 @@ function computeStableFrontier(
   return frontier;
 }
 
-function isCausallyStable(opId: string, stableFrontier: VersionVector): boolean {
-  // opId format: "${replicaId}:${seq}"
-  const [replicaId, seqStr] = opId.split(':');
-  const seq = parseInt(seqStr, 10);
-  return (stableFrontier.get(replicaId) ?? 0) >= seq;
+function isCausallyStable(opId: OpIdKey, stableFrontier: VersionVector): boolean {
+  const parsed = parseOpId(opId);               // splits on the last ':'
+  if (parsed === null) return false;
+  return (stableFrontier.get(parsed.replicaId) ?? 0) >= parsed.seq;
 }
 ```
+
+**Trust assumption**: the frontier is only as safe as the acks it is computed from. It assumes replicas report their VVs honestly; a Byzantine replica could claim ops it has not applied. That is out of scope for this educational kernel (requirements.md §11).
 
 **Correctness**: Frontier = component-wise minimum over ALL active members for EVERY replicaId in any ack.
 **Monotonicity**: Frontier only advances or stays the same (never regresses).
@@ -639,161 +743,163 @@ function isCausallyStable(opId: string, stableFrontier: VersionVector): boolean 
 
 ### Algorithm 6: Stage 1 Garbage Collection (Payload Reclamation)
 
-**Input**: RGA, stable frontier, GC policy
-**Output**: Updated RGA with reclaimed payloads; retained anchors remain
+**Input**: `state`, stable frontier, current GC stats
+**Output**: payloads reclaimed in place; new `GCStats`. Structural nodes (the tree) are never touched, so retained anchors keep working.
 
 ```typescript
-function performStage1GC(
-  rga: Element[],
+function performStage1GC<T>(
+  state: ReplicaState<T>,
   stableFrontier: VersionVector,
-  deleteOpsPerElement: Map<string, Set<string>>,  // elementKey -> set of deleteOpKeys
-  gcStats: GCStats
-): { rga: Element[]; bytesReclaimed: number } {
+  stats: GCStats
+): { stats: GCStats; bytesReclaimed: number } {
   let bytesReclaimed = 0;
+  let tombstoneCount = 0;
+  let payloadsReclaimed = 0;
 
-  for (const element of rga) {
-    // Only reclaim deleted elements that are causally stable
-    if (element.deleted && !element.payloadReclaimed) {
-      const deleteOps = deleteOpsPerElement.get(element.id) || new Set();
-      let isReclaimable = false;
-      
-      // Payload is reclaimable if ANY delete op D targeting it satisfies D.seq <= Frontier[D.replica]
-      for (const deleteOpKey of deleteOps) {
-        if (isCausallyStable(deleteOpKey, stableFrontier)) {
-          isReclaimable = true;
-          break;
+  for (const element of state.rga.elements.values()) {
+    if (!element.deleted) continue;
+    tombstoneCount++;
+
+    if (!element.payloadReclaimed) {
+      // Reclaimable if ANY delete op targeting the element is causally stable
+      // (state.deleteOps includes delete ops that were no-ops; Algorithm 2).
+      const deleteOps = state.deleteOps.get(element.id);
+      let reclaimable = false;
+      if (deleteOps !== undefined) {
+        for (const deleteOpId of deleteOps) {
+          if (isCausallyStable(deleteOpId, stableFrontier)) { reclaimable = true; break; }
         }
       }
-      
-      if (isReclaimable) {
-        const payloadSize = estimatePayloadSize(element.value);
+      if (reclaimable) {
+        bytesReclaimed += estimatePayloadSize(element.value);   // counted once per element
         element.value = undefined;
         element.payloadReclaimed = true;
-        bytesReclaimed += payloadSize;
-        // FIX: Add bytes reclaimed only once per element, not in accumulation
       }
     }
+    if (element.payloadReclaimed) payloadsReclaimed++;
   }
 
-  gcStats.bytesReclaimed += bytesReclaimed;
-  gcStats.tombstonesRetained = rga.filter(e => e.deleted && e.payloadReclaimed).length;
-
-  return { rga, bytesReclaimed };
-}
-
-function estimatePayloadSize(value: any): number {
-  // Rough estimation; in production, use actual serialization size
-  if (value === undefined || value === null) return 0;
-  return JSON.stringify(value).length;
-}
-```
-
-**Complexity**: O(n * d) where n is sequence length and d is average delete ops per element
-
-**Correctness**: 
-- Reclaimed payloads are never accessed again (retained anchor has no value)
-- Payload is reclaimable if ANY delete op is at or below frontier
-- Bytes reclaimed is added once per element, not accumulated
-- Structural integrity is preserved (anchor position unchanged)
-- Non-breaking for applications (invisible change)
-
----
-
-### Algorithm 7: Snapshot Creation
-
-**Input**: Current RGA, VV, membership, replicaId, local clock
-**Output**: Serializable snapshot
-
-```typescript
-function createSnapshot<T>(
-  rga: Element<T>[],
-  vv: VersionVector,
-  membership: MembershipView,
-  gcStats: GCStats,
-  replicaId: string,
-  localClock: number
-): Snapshot<T> {
-  // Deep copy RGA to avoid external mutations
-  const sequenceCopy = rga.map((elem) => ({
-    ...elem,
-  }));
-
-  // Copy VV
-  const vvCopy = new Map(vv);
-
-  // Copy membership
-  const membershipCopy = {
-    activeReplicas: new Set(membership.activeReplicas),
-    epoch: membership.epoch,
-  };
-
   return {
-    sequence: sequenceCopy,
-    vv: vvCopy,
-    membership: membershipCopy,
-    metadata: {
-      creator: replicaId,
-      logicalIndex: localClock,  // Lamport clock at snapshot time, not wall-clock timestamp
-      gcStats,
+    bytesReclaimed,
+    stats: {
+      ...stats,
+      tombstoneCount,
+      payloadsReclaimed,
+      bytesSaved: stats.bytesSaved + bytesReclaimed,
+      stableFrontier: new Map(stableFrontier),
     },
   };
 }
 ```
 
-**Determinism**: Deep copies ensure no shared mutable references. Metadata uses logical index (Lamport clock), not wall-clock time.
+**Complexity**: O(n · d) where n is the number of elements and d the average number of delete ops per deleted element.
+
+**Correctness**:
+- Reclaimed payloads are never read again; the element stays in the tree with its `id`, `anchor`, `lamport` and `deleted` flag, so it still orders its children and serves as an anchor for concurrent inserts.
+- A payload is reclaimable if ANY delete op for the element is at or below the frontier: that op has been applied by every active replica, so the element is deleted everywhere and no replica will read its payload.
+- Bytes are added once per element, when it is reclaimed.
+- The visible sequence is identical with GC on or off.
+
+---
+
+### Algorithm 7: Snapshot Creation
+
+**Input**: `state`, `replicaId`, GC stats
+**Output**: serializable snapshot (deep copies; no shared mutable references; no wall-clock time)
+
+```typescript
+function createSnapshot<T>(
+  state: ReplicaState<T>,
+  replicaId: string,
+  gcStats: GCStats
+): Snapshot<T> {
+  return {
+    elements: traverse(state.rga).map((e) => ({ ...e })),   // depth-first order, tombstones included
+    vv: new Map(state.vv),
+    membership: {
+      activeMembers: new Set(state.membership.activeMembers),
+      evictedMembers: new Map(state.membership.evictedMembers),   // cutoffs travel with the snapshot
+      epoch: state.membership.epoch,
+    },
+    lamportClock: state.lamportClock,                       // logical timestamp
+    replicaId,
+    gcStats: { ...gcStats, stableFrontier: new Map(gcStats.stableFrontier) },
+  };
+}
+```
+
+**Not included, by design**: the OpLog (a restored replica starts a fresh log from the snapshot point) and the dependency buffer. Buffered ops are not covered by the snapshot's VV, so peers re-send them through the normal missing-op exchange (Requirement 6.6); nothing is lost.
+
+**Determinism**: deep copies prevent aliasing; `lamportClock` replaces any wall-clock timestamp.
 
 ---
 
 ### Algorithm 8: Snapshot Rejoin
 
-**Input**: Snapshot, post-snapshot operations
-**Output**: Initialized CRDT state
+**Input**: `snapshot`, `newReplicaId` (a NEW incarnation when an evicted replica returns), `postSnapshotOps`
+**Output**: a CRDT whose state equals that of a continuously connected replica once all ops are delivered
+
+Rejoin has two parts: restore the snapshot state, then feed **every** post-snapshot op through the normal `applyOp` pipeline (Algorithm 3). There is no simplified apply path for rejoin.
 
 ```typescript
-function rejoinFromSnapshot<T>(
-  snapshot: Snapshot<T>,
-  postSnapshotOps: Operation<T>[]
-): {
-  rga: Element<T>[];
-  vv: VersionVector;
-  membership: MembershipView;
-} {
-  // Initialize from snapshot
-  let rga = [...snapshot.sequence];
-  let vv = new Map(snapshot.vv);
-  let membership = {
-    activeReplicas: new Set(snapshot.membership.activeReplicas),
-    epoch: snapshot.membership.epoch,
-  };
+// Restore state only (no ops applied yet). Used by CRDT.fromSnapshot / rejoinFromSnapshot.
+function restoreFromSnapshot<T>(snapshot: Snapshot<T>): ReplicaState<T> {
+  const rga: RGAState<T> = { elements: new Map(), children: new Map() };
+  for (const e of snapshot.elements) {          // snapshot is in depth-first order, so each parent's
+    const element = { ...e };                    // children appear newest-first: appending preserves the invariant
+    rga.elements.set(element.id, element);
+    const parent: ParentKey = element.anchor ?? 'HEAD';
+    const list = rga.children.get(parent);
+    if (list) list.push(element.id); else rga.children.set(parent, [element.id]);
+  }
 
-  // Apply post-snapshot operations in order
-  for (const op of postSnapshotOps) {
-    // Dedup: skip if already in snapshot VV
-    if ((vv.get(op.replicaId) ?? 0) >= op.seq) {
-      continue;
-    }
-
-    // Apply operation (simplified; actual code would use full applyOp logic)
-    if (op.type === 'insert') {
-      const { rga: updated } = applyInsert(rga, op, buildOpIndex(rga));
-      rga = updated;
-    } else if (op.type === 'delete') {
-      const { rga: updated } = applyDelete(rga, op, buildOpIndex(rga));
-      rga = updated;
-    }
-
-    // Update VV (with contiguity check)
-    const currentSeq = vv.get(op.replicaId) ?? 0;
-    if (op.seq === currentSeq + 1) {
-      vv = advanceVV(vv, op.replicaId, op.seq);
+  // Seed delete-op tracking from deletedAt. Conservative: GC may reclaim later than on the
+  // snapshotting replica, never earlier.
+  const deleteOps = new Map<OpIdKey, Set<OpIdKey>>();
+  for (const element of rga.elements.values()) {
+    if (element.deleted && !element.payloadReclaimed && element.deletedAt !== undefined) {
+      deleteOps.set(element.id, new Set([element.deletedAt]));
     }
   }
 
-  return { rga, vv, membership };
+  return {
+    rga,
+    vv: new Map(snapshot.vv),                   // everything at or below it counts as applied
+    buffer: { ops: new Map(), missing: new Map(), waiting: new Map() },
+    opLog: [],
+    deleteOps,
+    membership: {
+      activeMembers: new Set(snapshot.membership.activeMembers),
+      evictedMembers: new Map(snapshot.membership.evictedMembers),
+      epoch: snapshot.membership.epoch,
+    },
+    lamportClock: snapshot.lamportClock,
+  };
+}
+
+function rejoinFromSnapshot<T>(
+  snapshot: Snapshot<T>,
+  newReplicaId: string,
+  postSnapshotOps: Operation<T>[]
+): CRDT<T> {
+  // restoreFromSnapshot + own seq counter. A NEW incarnation starts its own seq at 0;
+  // a plain restart of the same replica (replicaId defaulting to snapshot.replicaId)
+  // continues from VV[replicaId].
+  const crdt = CRDT.fromSnapshot(snapshot, newReplicaId);
+  for (const op of postSnapshotOps) {
+    crdt.applyOp(op);   // full pipeline: author fencing (snapshot membership + cutoffs), duplicate
+  }                      // suppression (seq <= VV), dependency buffering, contiguous VV advance, logging
+  return crdt;
 }
 ```
 
-**Correctness**: Snapshot + post-ops produce the same state as continuous application.
+**What the shared pipeline guarantees** (and a loop that applied ops directly would not):
+- Ops from an evicted author beyond its cutoff are fenced.
+- An out-of-order post-snapshot op is buffered, not skipped; it applies when its predecessors arrive.
+- Non-contiguous duplicates are detected (`seq <= VV[r]` is exact because applied ops are always a contiguous prefix).
+- A no-op op still advances the VV, so it cannot stall later ops.
+
+**Correctness**: snapshot state + post-snapshot ops delivered in any order and any number of times produce the same state as continuous application (Property 15).
 
 ---
 
@@ -829,21 +935,23 @@ class CRDT<T = any> {
   delete(elementId: OpIdKey): Operation<T>;
 
   /**
-   * Apply a remote operation to this replica's state.
-   * May buffer if dependencies are missing.
+   * Apply a remote operation to this replica's state (Algorithm 3).
+   * Fenced by author membership + cutoff only; the op's `epoch` field is never consulted.
+   * Duplicates are ignored; ops with missing dependencies are buffered, never dropped;
+   * no-op operations are still logged and advance the VV.
    * @param op Operation from another replica
-   * @param fromEpoch Optional epoch context for fencing
    */
-  applyOp(op: Operation<T>, fromEpoch?: number): void;
+  applyOp(op: Operation<T>): void;
 
   // ==================== Query Methods ====================
 
   /**
    * Get the current sequence (non-deleted elements only).
-   * Visible elements are ordered by their anchor-based placement in the RGA, with concurrent 
-   * inserts at the same anchor ordered deterministically by Op ID (replicaId first, then sequence).
-   * All replicas applying the same operations in any order produce identical visible sequences.
-   * @returns Array of non-deleted elements, deterministically ordered by anchor and Op ID
+   * This is the depth-first traversal of the RGA anchor tree (Algorithm 1) with deleted
+   * elements filtered out: siblings (inserts at the same anchor) appear newest first by
+   * (lamport, replicaId), and every element's descendants follow it contiguously.
+   * All replicas that applied the same operations, in any order, return identical sequences.
+   * @returns Array of non-deleted elements in sequence order
    */
   getSequence(): Element<T>[];
 
@@ -854,8 +962,8 @@ class CRDT<T = any> {
   getVV(): VersionVector;
 
   /**
-   * Get the current membership view (active replicas and epoch).
-   * @returns MembershipView with active replicas and epoch
+   * Get the current membership view.
+   * @returns MembershipView: activeMembers, evictedMembers (replicaId -> cutoff), epoch
    */
   getMembershipView(): MembershipView;
 
@@ -864,14 +972,14 @@ class CRDT<T = any> {
    * @param elementId Op ID of element
    * @returns true if deleted (tombstone), false if active
    */
-  isElementDeleted(elementId: OpId): boolean;
+  isElementDeleted(elementId: OpIdKey): boolean;
 
   /**
    * Check if an operation is causally stable (safe for GC).
    * @param opId Op ID to check
    * @returns true if at or below stable frontier, false otherwise
    */
-  isCausallyStable(opId: OpId): boolean;
+  isCausallyStable(opId: OpIdKey): boolean;
 
   /**
    * Get the current stable frontier (for coordinator use).
@@ -881,24 +989,23 @@ class CRDT<T = any> {
 
   /**
    * Get garbage collection statistics.
-   * @returns GC stats: bytes reclaimed, tombstones retained, reclaimable ops count
+   * @returns GCStats: tombstoneCount, payloadsReclaimed, bytesSaved, replicasEvicted, stableFrontier
    */
-  getGCStats(): {
-    bytesReclaimed: number;
-    tombstonesRetained: number;
-    reclaimableOps: number;
-  };
+  getGCStats(): GCStats;
 
   // ==================== Snapshots ====================
 
   /**
-   * Create a snapshot of the current state.
-   * @returns Snapshot including sequence, VV, membership, and metadata
+   * Create a snapshot of the current state (Algorithm 7).
+   * @returns Snapshot: elements (with anchors), VV, membership with cutoffs, lamportClock, gcStats
    */
   snapshot(): Snapshot<T>;
 
   /**
-   * Initialize from a snapshot (typically called on rejoin).
+   * Restore state from a snapshot (Algorithm 8, restore step). Instances are normally
+   * created with `CRDT.fromSnapshot(snapshot, replicaId?)`; a returning evicted replica
+   * MUST use a NEW replicaId. This restores state only: post-snapshot operations must then
+   * be delivered through `applyOp`, which applies full fencing, dedup, buffering and VV rules.
    * @param snapshot Snapshot to restore from
    */
   rejoinFromSnapshot(snapshot: Snapshot<T>): void;
@@ -906,11 +1013,14 @@ class CRDT<T = any> {
   // ==================== Membership ====================
 
   /**
-   * Update the membership view (called by coordinator).
-   * Increments epoch on change.
-   * @param newActiveReplicas New set of active replica IDs
+   * Install a new membership view published by the coordinator.
+   * The coordinator assigns the epoch (previous epoch + 1) and supplies the cutoffs of
+   * evicted replicas; the kernel needs the cutoffs to keep accepting an evicted author's
+   * ops up to its cutoff. A view whose epoch is not greater than the current epoch is ignored.
+   * Afterwards, buffered ops that are now fenced are rejected (Algorithm 3 notes).
+   * @param newView New membership view (activeMembers, evictedMembers with cutoffs, epoch)
    */
-  updateMembership(newActiveReplicas: Set<string>): void;
+  updateMembership(newView: MembershipView): void;
 
   /**
    * Update the stable frontier (called by coordinator).
@@ -983,32 +1093,31 @@ interface GCEventPayload {
 ### Serialization
 
 ```typescript
-// Operations are serializable to JSON with deterministic key order
-function serializeOperation<T>(op: Operation<T>): string {
-  const ordered = {
-    type: op.type,
-    replicaId: op.replicaId,
-    seq: op.seq,
-    ...(op.value !== undefined && { value: op.value }),
-    ...(op.anchorId && { anchorId: op.anchorId }),
-    ...(op.elementId && { elementId: op.elementId }),
-    ...(op.epoch !== undefined && { epoch: op.epoch }),
-  };
-  return JSON.stringify(ordered);
+// Operations: implemented in kernel/src/utils.ts.
+//   serializeOp(op): string        deterministic JSON: keys sorted by code unit at every
+//                                  nesting level, undefined fields omitted
+//   deserializeOp(json): Operation validates the structure (trust boundary) and throws on
+//                                  malformed input
+//
+// Snapshots contain Map and Set values, which JSON.stringify turns into `{}` (silent data
+// loss). serializeSnapshot MUST convert them to plain JSON first, in a fixed order:
+function serializeSnapshot<T>(s: Snapshot<T>): string {
+  return stableStringify({
+    elements: s.elements,                                   // array order is part of the data
+    vv: Object.fromEntries(s.vv),                           // keys sorted by stableStringify
+    membership: {
+      activeMembers: [...s.membership.activeMembers].sort(compareStrings),
+      evictedMembers: Object.fromEntries(s.membership.evictedMembers),
+      epoch: s.membership.epoch,
+    },
+    lamportClock: s.lamportClock,
+    replicaId: s.replicaId,
+    gcStats: s.gcStats && { ...s.gcStats, stableFrontier: Object.fromEntries(s.gcStats.stableFrontier) },
+    stableFrontier: s.stableFrontier && Object.fromEntries(s.stableFrontier),
+  });
 }
-
-function deserializeOperation<T>(json: string): Operation<T> {
-  return JSON.parse(json);
-}
-
-// Snapshots are similarly JSON-serializable
-function serializeSnapshot<T>(snapshot: Snapshot<T>): string {
-  return JSON.stringify(snapshot);
-}
-
-function deserializeSnapshot<T>(json: string): Snapshot<T> {
-  return JSON.parse(json);
-}
+// deserializeSnapshot is the exact inverse (validates input, rebuilds Map/Set) and
+// serialize(deserialize(json)) === json.
 ```
 
 ---
@@ -1019,7 +1128,7 @@ function deserializeSnapshot<T>(json: string): Snapshot<T> {
 
 ### Property 1: RGA Convergence
 
-For any set of operations applied in the same order across multiple replicas, the resulting sequences are byte-identical.
+For any set of operations delivered to multiple replicas in any order (respecting nothing but eventual delivery), the resulting sequences are byte-identical. This holds at any nesting depth, including concurrent inserts anchored on elements that themselves have concurrent children, and inserts into the middle of an existing sequence. For every element, its descendants appear contiguously after it (subtree contiguity).
 
 **Validates: Requirements 1.8, 14.2**
 
@@ -1049,9 +1158,9 @@ For any three Version Vectors A, B, C, if A ≤ B and B ≤ C, then A ≤ C (tra
 
 ### Property 6: Contiguous Prefix Rule
 
-For any replica and any received operation, the Version Vector entry for that replica advances only when all operations from sequence 1 through that operation's sequence have been applied or are causally stable.
+For any replica and any received operation, the Version Vector entry for that replica advances only when all operations from sequence 1 through that operation's sequence have been **applied**. Buffered operations never advance it, applied no-op operations do, and an entry never decreases.
 
-**Validates: Requirements 4.3, 4.4**
+**Validates: Requirements 5.3, 5.4, 5.10, 6.8**
 
 ### Property 7: Missing Operation Detection and Recovery
 
@@ -1077,9 +1186,9 @@ For any sequence of membership changes, the epoch number never decreases, increm
 
 **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7**
 
-### Property 11: Stale-Epoch Fencing
+### Property 11: Evicted-Author Fencing
 
-For any operation from a replica with an epoch lower than the current active epoch, that operation is rejected and does not mutate state, VV, or membership.
+For any edit operation whose author is not active and whose seq exceeds that author's cutoff (or whose author is unknown), the operation is rejected and does not mutate state, VV, or membership. For an evicted author, ops with seq at or below the cutoff are still accepted. The operation's `epoch` field has no effect on the outcome. (Control messages from non-active or stale-epoch senders are rejected by the separate epoch-based mechanism, requirements.md §10.0.)
 
 **Validates: Requirements 10.1, 10.2, 10.4, 10.5, 10.6, 14.8**
 
@@ -1134,10 +1243,12 @@ For any sequence of API calls in the same order across two replicas, the resulti
 The kernel is designed to never throw exceptions during normal operation. Instead:
 
 1. **Duplicate Operations**: Silently suppressed (idempotent)
-2. **Stale-Epoch Operations**: Silently rejected, diagnostic event emitted
+2. **Fenced Operations**: An edit op from an author that is not active and is beyond its cutoff (or unknown) is silently rejected; a diagnostic event is emitted. Control messages from non-active or stale-epoch senders get a `rejected` response.
 3. **Out-of-Order Operations**: Buffered, never dropped
-4. **Invalid Anchors**: Treated as HEAD (insert at beginning)
-5. **Non-Existent Elements**: Delete operations on missing elements are skipped (no-op)
+4. **Unknown Anchors**: An insert whose anchor has not been applied yet is buffered until the anchor arrives (never re-anchored to HEAD, which would break convergence)
+5. **Unknown Delete Targets**: A delete whose target has not been applied yet is buffered until the target arrives
+6. **No-op Operations**: A ready operation that changes no state (e.g., delete of an already-deleted element) is still logged, counted as applied, and advances the VV
+7. **Malformed Input**: `deserializeOp` / `deserializeSnapshot` validate their input and throw; the apply path itself never throws on well-formed operations
 
 ### Graceful Degradation
 
@@ -1147,7 +1258,7 @@ The kernel is designed to never throw exceptions during normal operation. Instea
 
 ### Diagnostic Events
 
-- `'staleEpochOp'`: Emitted when an operation from an evicted replica is received
+- `'fencedOp'`: Emitted when an edit operation is rejected by author + cutoff fencing
 - `'missingOpDetected'`: Emitted when gaps are detected in op sequence
 - `'bufferUnblocked'`: Emitted when buffered operations are unblocked
 
@@ -1173,7 +1284,7 @@ Cover every exported function and class method:
 
 Generate randomized scenarios using custom arbitraries:
 
-- **Operation Sequences**: Arbitrary operations with varying anchors, values, deletes
+- **Operation Sequences**: Arbitrary operations with varying anchors, values, deletes. Must include deep anchor chains (depth ≥ 3) with concurrent siblings at several levels, inserts into the middle of existing sequences, and concurrent deletes of the same element (no-ops)
 - **Multi-Replica Scenarios**: Multiple replicas generating concurrent operations
 - **Network Scenarios**: Message reordering, duplication, loss (seeded and deterministic)
 - **Membership Changes**: Dynamic epochs, evictions, rejoin scenarios
@@ -1219,9 +1330,9 @@ class DeterministicNetworkSimulator {
 
 | Operation | Complexity | Notes |
 |-----------|-----------|-------|
-| `insert()` | O(n) | n = sequence length; scan for anchor + find sort position |
+| `insert()` | O(c) | c = number of siblings under the anchor (element lookup is O(1)) |
 | `delete()` | O(1) | Map lookup + flag mutation |
-| `applyOp()` | O(1) avg | O(b) if unblocking buffered ops (b = buffer size) |
+| `applyOp()` | O(1) avg | O(k) when unblocking k buffered ops (indexed lookup, no buffer rescan) |
 | `getSequence()` | O(n) | Scan and filter non-deleted elements |
 | `getVV()` | O(m) | m = number of replicas (map iteration) |
 | VV Comparison | O(m) | Component-wise comparison |
@@ -1256,6 +1367,24 @@ Manages:
 
 **Eviction Policy**: The coordinator maintains a list of stalled peers (those that have not acknowledged for a configurable period) and displays them in the Graveyard panel. Eviction occurs only when the operator explicitly triggers an 'Exorcise' action through the UI. The coordinator never automatically evicts replicas.
 
+**Eviction Protocol (two phases, requirements.md §10.3)**:
+
+```
+Operator: Exorcise(target)
+1. Coordinator -> all active members: evict-prepare(target)
+2. Each member: stop applying NEW ops from target; reply with contiguous applied seq for target
+3. Coordinator: cutoff[target] = max(replies)     (waits for every active member)
+4. Coordinator -> all: membership(epoch+1, target removed, evictedMembers[target] = cutoff)
+   Eviction is now PENDING. Fencing by cutoff is in force.
+5. Each survivor: backfill target's ops up to cutoff from peers via applyOp,
+   then reply evict-confirm(target, vv) with vv[target] >= cutoff
+6. Coordinator: COMPLETE only when every survivor has confirmed.
+   Until then: Graveyard shows "exorcism pending"; coordinator re-sends backfill requests;
+   non-confirming members are shown as stalled for a MANUAL Exorcise (never automatic).
+```
+
+Why the barrier: without step 5/6 a survivor that missed some of target's ops below the cutoff would keep a permanent gap, because the target is gone and its ops can no longer be fetched from it. While the eviction is pending the stable frontier stays safe: `Frontier[target] = min over survivors of ack[target]`, so an un-backfilled survivor holds it back and nothing of target's is reclaimed too early. The coordinator's retries and timers live in the coordinator, not in the kernel.
+
 ### Applications (Graveyard Whiteboard, Cursed Checklist)
 
 - Call `insert()` / `delete()` to create ops
@@ -1272,7 +1401,7 @@ Manages:
 RGA (Replicated Growable Array) provides:
 - Deterministic convergence without central coordination
 - Efficient anchor-based insertion (no need for fractional indices)
-- Clear semantics (elements retain creation order)
+- Clear semantics (an insert lands immediately after its anchor; concurrent inserts at one anchor are ordered newest first)
 - Well-understood algorithm with published proofs
 
 ### Why Contiguous VVs?
