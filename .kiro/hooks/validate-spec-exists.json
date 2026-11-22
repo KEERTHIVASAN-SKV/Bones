@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Validate .kiro/specs exists before commit",
+      "trigger": "PreToolUse",
+      "description": "Prevents commits if the spec directory is missing or deleted",
+      "matcher": "execute_pwsh",
+      "action": {
+        "type": "command",
+        "command": "if (Test-Path '.kiro/specs/crdt-kernel/') { exit 0 } else { exit 2 }",
+        "timeout": 5
+      }
+    }
+  ]
+}

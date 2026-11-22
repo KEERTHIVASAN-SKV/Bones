@@ -1,0 +1,26 @@
+{
+  "name": "@bones/kernel",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CRDT Kernel: Pure, deterministic replicated data type implementation",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests --ext .ts"
+  },
+  "keywords": ["crdt", "collaborative", "conflict-free", "replicated"],
+  "author": "Keerthivasan S.",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "vitest": "2.0.5",
+    "fast-check": "3.19.0",
+    "eslint": "8.57.0",
+    "@typescript-eslint/eslint-plugin": "8.0.0",
+    "@typescript-eslint/parser": "8.0.0"
+  }
+}
