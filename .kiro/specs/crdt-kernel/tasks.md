@@ -127,7 +127,7 @@ Applications (KER-078 to KER-080)
 
 #### RGA Module (Replicated Growable Array)
 
-- [ ] 6. **RGA Data Structure and Core Insert Logic** (KER-006)
+- [x] 6. **RGA Data Structure and Core Insert Logic** (KER-006)
   - Create `src/rga.ts` with:
     - `RGAState`: `elements: Map<OpIdKey, Element>` plus `children: Map<OpIdKey | 'HEAD', OpIdKey[]>` kept sorted newest-first (design.md Algorithm 1). The RGA is a TREE, not a flat array; do NOT implement the insert as a flat array scan.
     - `insert(anchorId, value)` function: create insert operation (`id`, `anchor`, `lamport`)
