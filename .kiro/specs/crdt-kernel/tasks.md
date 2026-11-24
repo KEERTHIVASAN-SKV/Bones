@@ -45,7 +45,7 @@ Applications (KER-078 to KER-080)
 
 ### Phase 1: Project Setup
 
-- [ ] 1. **Repository Structure and TypeScript Configuration** (KER-001)
+- [x] 1. **Repository Structure and TypeScript Configuration** (KER-001)
   - Initialize `/kernel` directory with subdirectories: `/src`, `/tests`, `/testing`
   - Configure `tsconfig.json` for TypeScript (strict mode enabled)
   - Set up `package.json` with dependencies: `typescript`, `vitest`, `fast-check`
@@ -59,7 +59,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: None
   - **Validation**: Run `npm run build` and verify output
 
-- [ ] 2. **Test Framework Setup (Vitest)** (KER-002)
+- [x] 2. **Test Framework Setup (Vitest)** (KER-002)
   - Configure Vitest with `vitest.config.ts`
   - Set up coverage reporting (coverage > 85% goal)
   - Create test utilities for deterministic seeding
@@ -87,7 +87,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-002
   - **Validation**: Write and run a sample fast-check property (always-pass) to verify setup
 
-- [ ] 4. **Shared Types and Interfaces** (KER-004)
+- [x] 4. **Shared Types and Interfaces** (KER-004)
   - Create `src/types.ts` with all core interfaces:
     - `OpIdKey` (string `` `${replicaId}:${seq}` ``, never an object), `Element<T>` (includes `anchor`), `Operation<T>` (`id`, `anchor`, `target`; no separate `seq`), `VersionVector`, `MembershipView` (`activeMembers`, `evictedMembers` as replicaId → cutoff, `epoch`), `Snapshot<T>` (no wall-clock field), `OperationBuffer`
     - Source of truth: `kernel/src/types.ts` and the Type Mapping table in `.kiro/steering/tech.md`
@@ -102,7 +102,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-001
   - **Validation**: TypeScript compiles; import types in a test file and verify
 
-- [ ] 5. **Utility Functions and Helpers** (KER-005)
+- [x] 5. **Utility Functions and Helpers** (KER-005)
   - Create `src/utils.ts` with helpers:
     - `compareOpIds(a, b)`: lexicographic comparison
     - (`opId(op)` is obsolete: `Operation.id` already is the `OpIdKey`)
