@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Submission rules check",
+      "trigger": "SessionStart",
+      "description": "At session start, verify the Devpost and Skeleton Crew requirements: LICENSE, .kiro specs/steering/hooks, apps and coordinator folders, and that .kiro is not gitignored.",
+      "action": {
+        "type": "command",
+        "command": "node scripts/check-submission.mjs",
+        "timeout": 20
+      }
+    }
+  ]
+}

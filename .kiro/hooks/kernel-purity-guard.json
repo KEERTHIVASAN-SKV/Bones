@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Kernel purity guard",
+      "trigger": "PostFileSave",
+      "description": "On saving a file under kernel/src, fail if it uses Date.now, Math.random, DOM, timers, network, storage or localeCompare (tech.md Determinism Rules).",
+      "matcher": "(^|[\\\\/])kernel[\\\\/]src[\\\\/].*\\.ts$",
+      "action": {
+        "type": "command",
+        "command": "node scripts/check-purity.mjs",
+        "timeout": 20
+      }
+    }
+  ]
+}

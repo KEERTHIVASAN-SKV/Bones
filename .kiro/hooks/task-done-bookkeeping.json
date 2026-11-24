@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Task completion bookkeeping",
+      "trigger": "PostTaskExec",
+      "description": "After a spec task completes, make the agent keep tasks.md and STATUS.md honest.",
+      "action": {
+        "type": "agent",
+        "prompt": "A spec task just finished. Before moving on: (1) run `node scripts/quality-gate.mjs` and fix any failure; (2) tick the task's checkbox in .kiro/specs/crdt-kernel/tasks.md only if its acceptance criteria are actually met by passing tests; (3) update STATUS.md (current task, tests passing, open issues) with facts you verified, not estimates; (4) commit with the task ID in the message, one task per commit."
+      }
+    }
+  ]
+}
