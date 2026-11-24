@@ -10,18 +10,24 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts"
   },
-  "keywords": ["crdt", "collaborative", "conflict-free", "replicated"],
+  "keywords": [
+    "crdt",
+    "collaborative",
+    "conflict-free",
+    "replicated"
+  ],
   "author": "Keerthivasan S.",
   "license": "MIT",
-  "dependencies": {},
   "devDependencies": {
-    "typescript": "5.6.3",
-    "vitest": "2.0.5",
-    "fast-check": "3.19.0",
-    "eslint": "8.57.0",
     "@typescript-eslint/eslint-plugin": "8.0.0",
-    "@typescript-eslint/parser": "8.0.0"
+    "@typescript-eslint/parser": "8.0.0",
+    "@vitest/coverage-v8": "2.0.5",
+    "eslint": "8.57.0",
+    "fast-check": "3.19.0",
+    "typescript": "5.6.3",
+    "vitest": "2.0.5"
   }
 }
