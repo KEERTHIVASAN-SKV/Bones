@@ -2,11 +2,14 @@
 // Prints nothing but a one-line summary when everything passes; prints the failing step's output otherwise.
 // Usage: node scripts/quality-gate.mjs
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('..', import.meta.url));
+// Canonicalize the path (drive-letter case on Windows). Kiro may start hooks with a lowercase
+// drive ("c:\..."); Vitest then loads two copies of itself (c:/ and C:/) and every test file
+// fails with "No test suite found".
+const root = realpathSync.native(fileURLToPath(new URL('..', import.meta.url)));
 const kernel = join(root, 'kernel');
 
 if (!existsSync(join(kernel, 'node_modules'))) {

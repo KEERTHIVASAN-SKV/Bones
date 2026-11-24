@@ -61,7 +61,7 @@ Last verified run: typecheck, build, lint and purity clean; 76 tests pass; line 
 | `submission-check` | SessionStart | `node scripts/check-submission.mjs` |
 | `task-done-bookkeeping` | PostTaskExec | asks the agent to run the gate, tick `tasks.md` honestly, update this file, commit |
 
-The hook commands assume Kiro runs them from the repo root. That has not been confirmed.
+The hooks run from the repo root (confirmed: the Stop hook found `scripts/` and ran). Kiro launches them with a lowercase drive letter (`c:\...`); the scripts canonicalize the path with `realpathSync.native`, because otherwise Vitest loads two copies of itself and every test file fails with "No test suite found".
 
 ## Open issues
 

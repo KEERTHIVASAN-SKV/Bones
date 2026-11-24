@@ -1,11 +1,11 @@
 // Kernel purity guard (Kiro hook + manual use).
 // Fails if kernel/src contains non-deterministic or environment-dependent APIs.
 // Usage: node scripts/check-purity.mjs
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('..', import.meta.url));
+const root = realpathSync.native(fileURLToPath(new URL('..', import.meta.url))); // canonical drive-letter case
 const srcDir = join(root, 'kernel', 'src');
 
 const FORBIDDEN = [
