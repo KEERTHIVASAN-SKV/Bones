@@ -32,6 +32,12 @@ export interface RGAState<T> {
   readonly elements: Map<OpIdKey, Element<T>>;
   /** parent -> child IDs. Invariant: each list is sorted newest first. */
   readonly children: Map<ParentKey, OpIdKey[]>;
+  /**
+   * element -> every delete operation applied to it, INCLUDING no-op deletes (a second
+   * delete of an already-deleted element). Stage 1 GC reclaims a payload when ANY of these
+   * is causally stable (requirements.md 12.2).
+   */
+  readonly deleteOps: Map<OpIdKey, Set<OpIdKey>>;
 }
 
 /**
@@ -40,7 +46,7 @@ export interface RGAState<T> {
  * @returns A new, empty RGAState
  */
 export function createRGA<T>(): RGAState<T> {
-  return { elements: new Map(), children: new Map() };
+  return { elements: new Map(), children: new Map(), deleteOps: new Map() };
 }
 
 /**
@@ -145,6 +151,126 @@ export function applyInsert<T>(rga: RGAState<T>, op: Operation<T>): boolean {
     pos++;
   }
   siblings.splice(pos, 0, op.id);
+  return true;
+}
+
+/**
+ * Create a local delete operation (design.md Algorithm 2). Pure: the caller applies it.
+ *
+ * @param replicaId - Author replica ID
+ * @param target - Element to delete
+ * @param currentSeq - Highest sequence number this replica has issued so far
+ * @param currentEpoch - Current membership epoch (diagnostic only)
+ * @param localClock - Current Lamport clock of this replica
+ * @returns The operation and the new Lamport clock value
+ */
+export function delete_(
+  replicaId: string,
+  target: OpIdKey,
+  currentSeq: number,
+  currentEpoch: number,
+  localClock: number
+): { operation: Operation; newLamport: number } {
+  const newLamport = localClock + 1;
+  const operation: Operation = {
+    id: createOpId(replicaId, currentSeq + 1),
+    type: 'delete',
+    target,
+    lamport: newLamport,
+    replicaId,
+    epoch: currentEpoch,
+  };
+  return { operation, newLamport };
+}
+
+/**
+ * Apply a delete operation: tombstone the target. The element keeps its place in the tree
+ * (and its children), so it still works as an anchor.
+ *
+ * The delete is ALWAYS recorded in `rga.deleteOps`, even when it changes nothing (the
+ * element was already deleted): Stage 1 GC reclaims when ANY delete of the element is stable.
+ * `deletedAt` is the smallest delete Op ID applied so far (code-unit order), so concurrent
+ * deletes yield the same value on every replica regardless of arrival order.
+ *
+ * Precondition (guaranteed by the orchestrator's readiness check): the target is present.
+ *
+ * @param rga - RGA state (mutated)
+ * @param op - A delete operation
+ * @returns true if the element went from visible to deleted; false for a no-op delete
+ * @throws TypeError if `op` is not a delete or has no target
+ * @throws RangeError if the target element is not in the RGA
+ */
+export function applyDelete<T>(rga: RGAState<T>, op: Operation<T>): boolean {
+  if (op.type !== 'delete' || op.target === undefined) {
+    throw new TypeError('applyDelete: expected a delete operation with a target');
+  }
+  const element = rga.elements.get(op.target);
+  if (element === undefined) {
+    throw new RangeError(`applyDelete: target ${op.target} has not been applied; buffer the operation`);
+  }
+
+  let ops = rga.deleteOps.get(op.target);
+  if (ops === undefined) {
+    ops = new Set();
+    rga.deleteOps.set(op.target, ops);
+  }
+  ops.add(op.id);
+
+  if (element.deleted) {
+    if (element.deletedAt === undefined || compareOpIds(op.id, element.deletedAt) < 0) {
+      element.deletedAt = op.id;
+    }
+    return false;
+  }
+  element.deleted = true;
+  element.deletedAt = op.id;
+  return true;
+}
+
+/**
+ * The visible sequence: all non-deleted elements in sequence order.
+ * Returns copies, so callers cannot corrupt the RGA by mutating them.
+ *
+ * @param rga - RGA state
+ * @returns Copies of the non-deleted elements
+ */
+export function getSequence<T>(rga: RGAState<T>): Element<T>[] {
+  return traverse(rga)
+    .filter((element) => !element.deleted)
+    .map((element) => ({ ...element }));
+}
+
+/**
+ * Whether an element is a tombstone.
+ *
+ * @param rga - RGA state
+ * @param elementId - Element Op ID
+ * @returns true if the element exists and is deleted; false if it is live OR unknown
+ */
+export function isElementDeleted<T>(rga: RGAState<T>, elementId: OpIdKey): boolean {
+  return rga.elements.get(elementId)?.deleted ?? false;
+}
+
+/**
+ * Stage 1 GC primitive: drop the payload of a tombstone but keep its structural node
+ * (id, anchor, lamport, children), so it still orders its subtree and anchors new inserts.
+ * The visible sequence and the structural order are unchanged.
+ *
+ * Deciding WHEN this is safe (causal stability) is the GC module's job, not this function's.
+ *
+ * @param rga - RGA state (mutated)
+ * @param elementId - Element whose payload to reclaim
+ * @returns true if a payload was reclaimed; false if it had already been reclaimed
+ * @throws RangeError if the element is unknown or not deleted (a live payload must never be dropped)
+ */
+export function markPayloadReclaimed<T>(rga: RGAState<T>, elementId: OpIdKey): boolean {
+  const element = rga.elements.get(elementId);
+  if (element === undefined || !element.deleted) {
+    throw new RangeError(`markPayloadReclaimed: ${elementId} is unknown or not deleted`);
+  }
+  if (element.payloadReclaimed) return false;
+  element.value = undefined;
+  element.payloadReclaimed = true;
   return true;
 }
 

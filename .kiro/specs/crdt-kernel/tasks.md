@@ -145,7 +145,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-004, KER-005
   - **Validation**: Unit test: insert at various anchors; verify sibling order is newest-first; insert in the middle lands right after its anchor; nested concurrent inserts (depth ≥ 3) keep every subtree contiguous
 
-- [ ] 7. **RGA Delete Logic and Tombstones** (KER-007)
+- [x] 7. **RGA Delete Logic and Tombstones** (KER-007)
   - Implement `delete_(elementId, replicaId)` function: create delete operation (`id`, `target`, `lamport`)
   - Implement `applyDelete(state, op)` function: mark element as deleted (tombstone); returns whether the element changed (false for a no-op)
   - ALWAYS record the delete op in `deleteOps[target]`, even when it is a no-op (Stage 1 GC reclaims when ANY delete op of the element is stable)
@@ -161,7 +161,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-006
   - **Validation**: Unit test: delete → verify tombstone; verify anchor still works
 
-- [ ] 8. **RGA Sequence Traversal and Querying** (KER-008)
+- [x] 8. **RGA Sequence Traversal and Querying** (KER-008)
   - Implement `traverse(rga)` / `getSequence(rga)`: ITERATIVE depth-first pre-order traversal of the anchor tree (explicit stack, no recursion); `getSequence` returns only non-deleted elements
   - Implement `isElementDeleted(rga, elementId)` function: check deletion status
   - Reuse `buildOpIndex(elements)` from `utils.ts` (already implemented in KER-005) for index lookups over the traversal order
@@ -176,7 +176,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-007
   - **Validation**: Unit test: mixed insert/delete; verify sequence and index consistency
 
-- [ ] 9. **RGA Concurrent Insert Ordering** (KER-009)
+- [x] 9. **RGA Concurrent Insert Ordering** (KER-009)
   - Implement deterministic ordering for concurrent inserts targeting the same anchor: newest first by `(lamport, replicaId)`, lamport numeric then replicaId by code unit: a < b ? -1 : a > b ? 1 : 0 (no localeCompare)
   - Tombstones are ordinary tree nodes: they keep their children and may be anchors
   - Test that two replicas applying the same concurrent inserts, at any nesting depth, produce identical order
@@ -191,7 +191,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-006, KER-008
   - **Validation**: Unit test: 2+ concurrent inserts → verify newest-first `(lamport, replicaId)` order (code-unit only); subtree-contiguity regression test; tombstone-anchor test; PBT: random insertion order with nested anchors → same final sequence
 
-- [ ] 10. **RGA Payload Reclamation Preparation** (KER-010)
+- [x] 10. **RGA Payload Reclamation Preparation** (KER-010)
   - Add `payloadReclaimed` flag to Element interface
   - Implement logic to mark payloads as reclaimed (GC will call this)
   - Ensure reclaimed elements still function as anchors

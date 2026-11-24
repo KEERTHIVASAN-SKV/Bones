@@ -298,7 +298,6 @@ interface ReplicaState<T> {
   vv: VersionVector;                             // replaced (copy-on-write) on every advance
   buffer: OperationBuffer<T>;
   opLog: Operation<T>[];                         // append-only; applied ops in causal order
-  deleteOps: Map<OpIdKey, Set<OpIdKey>>;         // element -> ALL delete ops targeting it (Algorithm 6)
   membership: MembershipView;
   lamportClock: number;
 }
@@ -357,6 +356,7 @@ type ParentKey = OpIdKey | 'HEAD';
 interface RGAState<T> {
   elements: Map<OpIdKey, Element<T>>;   // every element, including tombstones, by Op ID
   children: Map<ParentKey, OpIdKey[]>;  // parent -> child IDs, ALWAYS sorted newest-first
+  deleteOps: Map<OpIdKey, Set<OpIdKey>>; // element -> ALL delete ops targeting it, incl. no-ops (Algorithms 2, 6)
 }
 
 // Sibling key: lamport (numeric), then replicaId (code-unit). The Op ID string is a final
@@ -484,16 +484,16 @@ function delete_(
 
 // Application. Precondition, guaranteed by isReady in Algorithm 3: the target exists.
 // Returns true only if the element transitioned from visible to deleted.
-function applyDelete<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
+function applyDelete<T>(rga: RGAState<T>, op: Operation<T>): boolean {
   const target = op.target!;
 
   // ALWAYS record the delete op against its target, even if it turns out to be a no-op:
   // Stage 1 GC reclaims when ANY delete op of the element is stable (Requirement 12.2).
-  let ops = state.deleteOps.get(target);
-  if (ops === undefined) { ops = new Set(); state.deleteOps.set(target, ops); }
+  let ops = rga.deleteOps.get(target);
+  if (ops === undefined) { ops = new Set(); rga.deleteOps.set(target, ops); }
   ops.add(op.id);
 
-  const element = state.rga.elements.get(target)!;
+  const element = rga.elements.get(target)!;
   if (element.deleted) {
     // No-op: a concurrent/earlier delete already tombstoned it. Keep `deletedAt`
     // deterministic across replicas: it is the SMALLEST delete Op ID applied so far,
@@ -567,7 +567,7 @@ function applyOp<T>(state: ReplicaState<T>, op: Operation<T>): ApplyResult {
 
 // Applies one op that is ready and not fenced.
 function applyReadyOp<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
-  const changed = op.type === 'insert' ? applyInsert(state.rga, op) : applyDelete(state, op);
+  const changed = op.type === 'insert' ? applyInsert(state.rga, op) : applyDelete(state.rga, op);
 
   // ALWAYS, whether or not state changed. A no-op (e.g., a second concurrent delete of the
   // same element) is still an applied op: if it were skipped, VV[replica] would stay one
@@ -762,8 +762,8 @@ function performStage1GC<T>(
 
     if (!element.payloadReclaimed) {
       // Reclaimable if ANY delete op targeting the element is causally stable
-      // (state.deleteOps includes delete ops that were no-ops; Algorithm 2).
-      const deleteOps = state.deleteOps.get(element.id);
+      // (rga.deleteOps includes delete ops that were no-ops; Algorithm 2).
+      const deleteOps = state.rga.deleteOps.get(element.id);
       let reclaimable = false;
       if (deleteOps !== undefined) {
         for (const deleteOpId of deleteOps) {
@@ -844,7 +844,7 @@ Rejoin has two parts: restore the snapshot state, then feed **every** post-snaps
 ```typescript
 // Restore state only (no ops applied yet). Used by CRDT.fromSnapshot / rejoinFromSnapshot.
 function restoreFromSnapshot<T>(snapshot: Snapshot<T>): ReplicaState<T> {
-  const rga: RGAState<T> = { elements: new Map(), children: new Map() };
+  const rga: RGAState<T> = { elements: new Map(), children: new Map(), deleteOps: new Map() };
   for (const e of snapshot.elements) {          // snapshot is in depth-first order, so each parent's
     const element = { ...e };                    // children appear newest-first: appending preserves the invariant
     rga.elements.set(element.id, element);
@@ -855,10 +855,9 @@ function restoreFromSnapshot<T>(snapshot: Snapshot<T>): ReplicaState<T> {
 
   // Seed delete-op tracking from deletedAt. Conservative: GC may reclaim later than on the
   // snapshotting replica, never earlier.
-  const deleteOps = new Map<OpIdKey, Set<OpIdKey>>();
   for (const element of rga.elements.values()) {
     if (element.deleted && !element.payloadReclaimed && element.deletedAt !== undefined) {
-      deleteOps.set(element.id, new Set([element.deletedAt]));
+      rga.deleteOps.set(element.id, new Set([element.deletedAt]));
     }
   }
 
@@ -867,7 +866,6 @@ function restoreFromSnapshot<T>(snapshot: Snapshot<T>): ReplicaState<T> {
     vv: new Map(snapshot.vv),                   // everything at or below it counts as applied
     buffer: { ops: new Map(), missing: new Map(), waiting: new Map() },
     opLog: [],
-    deleteOps,
     membership: {
       activeMembers: new Set(snapshot.membership.activeMembers),
       evictedMembers: new Map(snapshot.membership.evictedMembers),

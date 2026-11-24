@@ -1,6 +1,6 @@
 # Bones: Status
 
-Last updated: 2026-11-24. Submission deadline: Dec 3, 2026.
+Last updated: 2026-11-24 (after KER-010). Submission deadline: Dec 3, 2026.
 
 This is the only status document. Older ones are in `docs/archive/` and are historical.
 
@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build and lint clean; 37 tests pass; line coverage 91.55%.
+Last verified run: typecheck, build, lint and purity clean; 76 tests pass; line coverage 95.7% (`rga.ts` 97%).
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
@@ -28,7 +28,12 @@ Last verified run: typecheck, build and lint clean; 37 tests pass; line coverage
 | KER-003 fast-check setup | partly done: fast-check runs seeded; arbitraries for Operation/Element/VV/MembershipView are not written yet |
 | KER-004 types | done (`kernel/src/types.ts`) |
 | KER-005 utils + events | done |
-| KER-006 onward | not started. Next: KER-006 (RGA) |
+| KER-006 RGA anchor tree + insert + traversal | done (kernel/src/rga.ts) |
+| KER-007 delete + tombstones | done |
+| KER-008 getSequence / isElementDeleted | done |
+| KER-009 concurrent ordering | done: seeded property tests (convergence, idempotence, subtree contiguity, sibling order, Req 1.8). Mutation-checked: an oldest-first ordering fails 10 tests |
+| KER-010 payload reclamation primitive | done (markPayloadReclaimed; the GC decision logic is KER-023) |
+| KER-011 onward | not started. Next: KER-011 (VV module), then KER-015 (OpLog) and KER-018 (membership) |
 
 ## Source of truth
 
