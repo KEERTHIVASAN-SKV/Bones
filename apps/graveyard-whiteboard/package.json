@@ -1,0 +1,7 @@
+{
+  "name": "@bones/graveyard-whiteboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Graveyard Whiteboard: collaborative drawing app built on the Bones CRDT kernel (placeholder until KER-079)",
+  "license": "MIT"
+}

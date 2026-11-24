@@ -1,0 +1,7 @@
+{
+  "name": "@bones/cursed-checklist",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cursed Checklist: collaborative to-do app built on the Bones CRDT kernel (placeholder until KER-080)",
+  "license": "MIT"
+}
