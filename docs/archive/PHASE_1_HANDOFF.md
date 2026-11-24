@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-11-24).** Historical record only. Parts of this file are out of date or were later corrected. For the current state read `/STATUS.md`.
+
 # Phase 1 Handoff Summary
 
 **Status**: ✅ All Phase 1 tasks completed and verified  

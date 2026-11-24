@@ -6,7 +6,7 @@
 | Created | 2026-11-11 |
 | Owner | Keerthivasan S. (solo participant, B.Tech IT student, India / IST) |
 | Project (working name) | **Bones** |
-| Status | Pre-implementation. Update Section 22 at the start and end of every working session. |
+| Status | Pre-implementation. Update `STATUS.md` at the start and end of every working session. |
 
 ---
 
@@ -35,7 +35,7 @@ Untagged explanatory text (background, definitions, examples) is informational, 
 7. **Never mark a Must item as cut or done silently.** If a checkpoint (Section 19) is missed or a Must item is at risk, stop and report to the owner with a re-scope proposal.
 8. **Be honest in all documentation** (README, write-up, UI text). State limitations plainly (Section 20).
 9. **Do not invent Kiro features.** Check the official Kiro documentation for exact feature names and behaviour before writing Kiro configuration (Section 17).
-10. **Update the Decision Log and Status Tracker (Section 22)** whenever a decision is made or a milestone changes.
+10. **Update `STATUS.md` (decisions and status)** whenever a decision is made or a milestone changes.
 11. If the owner's latest instruction conflicts with this document, the owner's latest instruction wins. Then update this document.
 12. Do not use copyrighted assets (images, fonts with restrictive licences, music) in the app or demo video.
 
@@ -70,7 +70,7 @@ The owner must re-verify against the Official Rules tab before submitting. Devpo
 |---|---|
 | Eligible work | Only **new** projects started during the Submission Period (Oct 30 – Dec 4, 2026). Nothing started before Oct 30. |
 | Public repository | Public **GitHub** repo (not GitLab/Bitbucket). Must contain all source, assets and instructions. |
-| Licence | Open-source licence file, detectable and visible in the repo's About section. **[PROPOSED]** MIT. **[OPEN]** owner has not confirmed the licence. |
+| Licence | Open-source licence file, detectable and visible in the repo's About section. **[DECIDED]** MIT (the `LICENSE` file is in the repo root). |
 | `/.kiro` directory | Must exist at the repo root, showing specs, hooks and steering. **Must never be gitignored.** |
 | Skeleton Crew rule | The repo must contain **2 separate repo folders for the 2 separate applications**. Re-check the Rules tab for exact structure. |
 | Working app URL(s) | Public URL(s) for the working app(s). Credentials, if any, go in the Devpost form (judges only). |
@@ -149,7 +149,7 @@ Tombstones, version vectors, causal stability and CRDT compaction are **establis
 
 ### 3.5 Prior art to acknowledge in the README **[PROPOSED]**
 
-crdt.tech, the RGA paper (Roh et al.), Kleppmann and Beresford's JSON CRDT paper, Shapiro et al.'s CRDT paper, Yjs, Automerge, Loro. Verify each citation before quoting. See Appendix B.
+crdt.tech, the RGA paper (Roh et al.), Kleppmann and Beresford's JSON CRDT paper, Shapiro et al.'s CRDT paper, Yjs, Automerge, Loro. Verify each citation before quoting.
 
 ---
 

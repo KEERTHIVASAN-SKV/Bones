@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-11-24).** Historical record only. Parts of this file are out of date or were later corrected. For the current state read `/STATUS.md`.
+
 # Bones Project — Start Here
 
 ## ✅ Pre-Implementation Checklist COMPLETE

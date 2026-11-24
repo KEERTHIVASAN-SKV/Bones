@@ -1,3 +1,5 @@
+> **ARCHIVED (2026-11-24).** Historical record only. Parts of this file are out of date or were later corrected. For the current state read `/STATUS.md`.
+
 # Phase 1 Complete ✅
 
 **Date**: November 22, 2026  
