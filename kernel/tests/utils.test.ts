@@ -11,6 +11,8 @@ import {
   compareVersionVectors,
   mergeVersionVectors,
   updateVersionVector,
+  serializeVersionVector,
+  deserializeVersionVector,
   isValidReplicaId,
   isValidSequence,
   stableStringify,
@@ -52,6 +54,21 @@ describe('OpId utilities', () => {
     expect(isValidReplicaId('replica@bad')).toBe(false);
   });
 
+  it('accepts the "${siteId}.${incarnation}" replica ID format (requirements.md 2.1)', () => {
+    expect(isValidReplicaId('site1.2')).toBe(true);
+    expect(isValidReplicaId('abc123.0')).toBe(true);
+    expect(isValidReplicaId('a.b.c')).toBe(true);
+    // ':' separates replicaId from seq inside an OpIdKey, so it stays invalid in a replica ID
+    expect(isValidReplicaId('a:b')).toBe(false);
+    expect(isValidReplicaId('has space')).toBe(false);
+  });
+
+  it('compareOpIds is plain string order, NOT numeric seq order', () => {
+    // "a:10" < "a:9" because '1' < '9' as characters
+    expect(compareOpIds(createOpId('a', 10), createOpId('a', 9))).toBe(-1);
+    expect(compareOpIds(createOpId('a', 9), createOpId('a', 10))).toBe(1);
+  });
+
   it('validates sequences', () => {
     expect(isValidSequence(1)).toBe(true);
     expect(isValidSequence(42)).toBe(true);
@@ -89,6 +106,32 @@ describe('Version Vector utilities', () => {
     expect(compareVersionVectors(vv1, vv2)).toBe('before');
     expect(compareVersionVectors(vv2, vv1)).toBe('after');
     expect(compareVersionVectors(vv1, vv3)).toBe('concurrent');
+  });
+
+  it('keeps a "__proto__" replica ID when serializing a version vector', () => {
+    const vv = new Map([['__proto__', 4]]);
+    const plain = serializeVersionVector(vv);
+    expect(Object.keys(plain)).toEqual(['__proto__']);
+    expect(deserializeVersionVector(plain)).toEqual(vv);
+  });
+
+  it('serializes and deserializes version vectors round-trip', () => {
+    const vv = new Map([['a.0', 3], ['b.1', 12]]);
+    expect(deserializeVersionVector(serializeVersionVector(vv))).toEqual(vv);
+  });
+
+  it('deserializeVersionVector keeps positive integers and ignores 0 entries', () => {
+    expect(deserializeVersionVector({ a: 2, b: 0 })).toEqual(new Map([['a', 2]]));
+  });
+
+  it('deserializeVersionVector rejects non-integer, negative, NaN, Infinity and string entries', () => {
+    const bad = (v: unknown) => () => deserializeVersionVector({ a: v as number });
+    expect(bad(1.5)).toThrow(TypeError);
+    expect(bad(-1)).toThrow(TypeError);
+    expect(bad(Number.NaN)).toThrow(TypeError);
+    expect(bad(Number.POSITIVE_INFINITY)).toThrow(TypeError);
+    expect(bad('3')).toThrow(TypeError);
+    expect(bad(null)).toThrow(TypeError);
   });
 
   it('reports equal vectors as equal, treating missing entries as 0', () => {

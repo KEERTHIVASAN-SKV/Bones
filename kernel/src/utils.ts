@@ -48,8 +48,10 @@ export function createOpId(replicaId: string, seq: number): OpIdKey {
 /**
  * Compare two OpIds for ordering.
  *
- * Uses only string comparison (no object conversion).
- * Lexicographic order: earlier replicaIds first, then by sequence.
+ * Uses only string comparison (no object conversion): plain code-unit order of the
+ * whole key. This is NOT numeric seq order: `"a:10"` sorts before `"a:9"` because
+ * `'1' < '9'` as characters. Never use it to order operations of one replica by seq;
+ * compare the parsed `seq` numbers for that.
  *
  * @param a - First OpIdKey
  * @param b - Second OpIdKey
@@ -177,7 +179,8 @@ export function isEmptyVersionVector(vv: VersionVector): boolean {
  * @returns JSON-serializable object
  */
 export function serializeVersionVector(vv: VersionVector): Record<string, number> {
-  const result: Record<string, number> = {};
+  // Null-prototype object so a replica ID such as "__proto__" stays an ordinary key.
+  const result = Object.create(null) as Record<string, number>;
   for (const [replicaId, seq] of vv) {
     result[replicaId] = seq;
   }
@@ -185,17 +188,24 @@ export function serializeVersionVector(vv: VersionVector): Record<string, number
 }
 
 /**
- * Deserialize a version vector from JSON.
+ * Deserialize a version vector from JSON. This is a trust boundary: entries are
+ * validated, not silently dropped. An entry of 0 means "nothing applied" and is
+ * omitted, exactly like a missing entry.
  *
  * @param obj - Plain object from JSON (should be `{ replicaId: seq, ... }`)
  * @returns New VersionVector Map
+ * @throws TypeError if any entry is not a non-negative integer (e.g. 1.5, -1, NaN, "3", null)
  */
 export function deserializeVersionVector(obj: Record<string, number>): VersionVector {
   const vv = new Map<string, number>();
   for (const [replicaId, seq] of Object.entries(obj)) {
-    if (typeof seq === 'number' && seq > 0) {
-      vv.set(replicaId, seq);
+    if (seq === 0) continue;
+    if (!isValidSequence(seq)) {
+      throw new TypeError(
+        `deserializeVersionVector: entry for "${replicaId}" must be a positive integer, got ${String(seq)}`
+      );
     }
+    vv.set(replicaId, seq);
   }
   return vv;
 }
@@ -203,7 +213,9 @@ export function deserializeVersionVector(obj: Record<string, number>): VersionVe
 /**
  * Check if replicaId is a valid identifier.
  *
- * Valid format: non-empty string with alphanumerics, hyphens, underscores.
+ * Valid format: non-empty string of alphanumerics, hyphens, underscores and dots, which
+ * covers the `${siteId}.${incarnation}` form (requirements.md 2.1), e.g. `"site1.2"`.
+ * `:` is excluded because it separates the replica ID from the seq inside an OpIdKey.
  * This is a soft check for diagnostics; the kernel doesn't strictly enforce it.
  *
  * @param replicaId - Replica ID to validate
@@ -211,7 +223,7 @@ export function deserializeVersionVector(obj: Record<string, number>): VersionVe
  */
 export function isValidReplicaId(replicaId: string): boolean {
   if (!replicaId || replicaId.length === 0) return false;
-  return /^[a-zA-Z0-9_-]+$/.test(replicaId);
+  return /^[a-zA-Z0-9_.-]+$/.test(replicaId);
 }
 
 /**
