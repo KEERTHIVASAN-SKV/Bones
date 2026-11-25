@@ -38,6 +38,36 @@ export function advanceContiguous(vv: VersionVector, replicaId: string, seq: num
 }
 
 /**
+ * What a remote peer is missing, given what this side has applied.
+ *
+ * For every replica where `local` is ahead of `remote` (a missing entry counts as 0) it returns
+ * the inclusive range of sequence numbers the remote lacks: `{ from: remote + 1, to: local }`.
+ * Replicas where the remote is level with or ahead of `local` are omitted. Because a version
+ * vector is a contiguous prefix, these ranges are exactly the missing operations.
+ *
+ * The result is directional: `computeVVDifference(a, b)` is what B lacks, and
+ * `computeVVDifference(b, a)` is what A lacks. Keys are listed in code-unit order, so the output
+ * is deterministic. Neither input is modified.
+ *
+ * @param local - The version vector of the side that has the operations
+ * @param remote - The version vector of the side that may be missing some
+ * @returns replicaId -> inclusive missing range
+ */
+export function computeVVDifference(
+  local: VersionVector,
+  remote: VersionVector
+): Map<string, { from: number; to: number }> {
+  const difference = new Map<string, { from: number; to: number }>();
+  const replicaIds = [...local.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const replicaId of replicaIds) {
+    const have = local.get(replicaId) as number;
+    const lacks = remote.get(replicaId) ?? 0;
+    if (have > lacks) difference.set(replicaId, { from: lacks + 1, to: have });
+  }
+  return difference;
+}
+
+/**
  * Stable frontier: the component-wise minimum of the given version vectors, where a replica
  * missing from a vector counts as 0. Entries that come out as 0 are omitted (absent = 0).
  *

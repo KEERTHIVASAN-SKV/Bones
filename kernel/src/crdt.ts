@@ -263,6 +263,25 @@ export class CRDT<T = unknown> {
   }
 
   /**
+   * Operations a peer with version vector `remoteVV` may still be missing, in causal (log) order.
+   * The log is already in causal order, so the result can be applied in the order given; the peer
+   * drops any duplicate harmlessly. Operations still waiting in this replica's buffer are not
+   * included (they are not applied here yet).
+   *
+   * Use it to catch a peer up: it sends its version vector, you answer with `opsSince(thatVV)`.
+   * A transport that does not replay old messages (e.g. BroadcastChannel) needs this.
+   *
+   * @param remoteVV - The peer's version vector (a missing entry counts as 0)
+   * @returns A new array of the operations with seq above the peer's entry for their author
+   */
+  opsSince(remoteVV: VersionVector): Operation<T>[] {
+    return this.getOps().filter((op) => {
+      const parsed = parseOpId(op.id) as { replicaId: string; seq: number };
+      return parsed.seq > (remoteVV.get(parsed.replicaId) ?? 0);
+    });
+  }
+
+  /**
    * Number of operations waiting in the dependency buffer.
    *
    * @returns The count

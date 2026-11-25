@@ -84,6 +84,167 @@ function view(c: CRDT<string>, ops: readonly Operation<string>[]): string {
   });
 }
 
+/** Run a concurrent history and return the three replicas themselves (not just the operations). */
+function runReplicas(steps: Step[]): CRDT<string>[] {
+  const replicas = NAMES.map((n) => new CRDT<string>(n));
+  const all: Operation<string>[] = [];
+  steps.forEach((s, i) => {
+    const r = replicas[s.replica];
+    if (s.kind <= 1) {
+      const visible = r.getSequence();
+      const k = s.pick % (visible.length + 1);
+      all.push(r.insert(k === 0 ? undefined : visible[k - 1].id, `v${i}`));
+    } else if (s.kind === 2) {
+      const pool = r.getOps().filter((o) => o.type === 'insert').map((o) => o.id);
+      if (pool.length > 0) all.push(r.delete(pool[s.pick % pool.length]));
+    } else {
+      const batch = shuffle(all, s.seed).slice(0, s.pick % (all.length + 1));
+      for (const op of batch) replicas[s.pick % replicas.length].applyOp(op);
+    }
+  });
+  return replicas;
+}
+
+/** Every operation any of the replicas has applied (used to enumerate tombstones in `view`). */
+function unionOps(replicas: readonly CRDT<string>[]): Operation<string>[] {
+  const byId = new Map<OpIdKey, Operation<string>>();
+  for (const r of replicas) for (const op of r.getOps()) byId.set(op.id, op);
+  return [...byId.values()];
+}
+
+/** One round of catch-up: each side sends only what the other's version vector lacks. */
+function exchange(a: CRDT<string>, b: CRDT<string>, order: (ops: Operation<string>[]) => Operation<string>[] = (o) => o): void {
+  const toB = order(a.opsSince(b.getVV())); // both computed BEFORE anything is applied
+  const toA = order(b.opsSince(a.getVV()));
+  deliver(b, toB);
+  deliver(a, toA);
+}
+
+/** What a replica has APPLIED (visible order, tombstones, VV). Buffered operations are not applied state. */
+function appliedView(c: CRDT<string>, ops: readonly Operation<string>[]): string {
+  const { pending: _pending, ...applied } = JSON.parse(view(c, ops)) as Record<string, unknown>;
+  void _pending;
+  return JSON.stringify(applied);
+}
+
+/** True if neither side has anything the other lacks (what `opsSince` would send). */
+function nothingToSend(a: CRDT<string>, b: CRDT<string>): boolean {
+  return a.opsSince(b.getVV()).length === 0 && b.opsSince(a.getVV()).length === 0;
+}
+
+/**
+ * Repeat pairwise catch-up rounds until a full pass sends nothing. A peer can only send what it
+ * has APPLIED, so a replica that was holding buffered operations needs more than one round:
+ * the exchange is repeated, exactly like a periodic "hello" in a real transport.
+ */
+function syncToFixedPoint(
+  replicas: readonly CRDT<string>[],
+  order: (ops: Operation<string>[]) => Operation<string>[] = (o) => o
+): number {
+  let rounds = 0;
+  for (; rounds < 20; rounds++) {
+    let quiet = true;
+    for (let i = 0; i < replicas.length; i++) {
+      for (let j = i + 1; j < replicas.length; j++) {
+        if (!nothingToSend(replicas[i], replicas[j])) quiet = false;
+        exchange(replicas[i], replicas[j], order);
+      }
+    }
+    if (quiet) return rounds;
+  }
+  throw new Error('catch-up did not reach a fixed point in 20 rounds');
+}
+
+describe('catch-up by version vector (F3)', () => {
+  it('two replicas that repeat the opsSince exchange reach identical APPLIED state, with nothing left to send', () => {
+    fc.assert(
+      fc.property(stepsArb, (steps) => {
+        const [a, b, c] = runReplicas(steps);
+        const everything = unionOps([a, b, c]);
+        syncToFixedPoint([a, b]);
+        expect(appliedView(a, everything)).toBe(appliedView(b, everything));
+        expect(nothingToSend(a, b)).toBe(true);
+      }),
+      RUNS
+    );
+  });
+
+  it('a pair needs more than one round when a peer holds a buffered operation (documented behaviour)', () => {
+    // r3:1 is anchored on r1:1; b receives r3:1 first, so it is buffered and b has nothing to send.
+    const a = new CRDT<string>('r1');
+    const c = new CRDT<string>('r3');
+    const b = new CRDT<string>('r2');
+    const first = a.insert(undefined, 'v0');
+    c.applyOp(first);
+    b.applyOp(c.insert(first.id, 'v2'));
+    expect(b.getPendingCount()).toBe(1);
+
+    exchange(a, b); // round 1: a gives b r1:1, which unblocks r3:1 on b; b had nothing applied to give a
+    expect(b.getSequence().map((e) => e.value)).toEqual(['v0', 'v2']);
+    expect(a.getSequence().map((e) => e.value)).toEqual(['v0']);
+    exchange(a, b); // round 2: now b can send r3:1
+    expect(a.getSequence().map((e) => e.value)).toEqual(['v0', 'v2']);
+    expect(nothingToSend(a, b)).toBe(true);
+  });
+
+  it('three replicas that repeat the exchange converge completely: identical state and nothing pending', () => {
+    fc.assert(
+      fc.property(stepsArb, (steps) => {
+        const replicas = runReplicas(steps);
+        const everything = unionOps(replicas);
+        syncToFixedPoint(replicas);
+        const [a, b, c] = replicas;
+        expect(view(a, everything)).toBe(view(b, everything));
+        expect(view(b, everything)).toBe(view(c, everything));
+        expect(JSON.parse(view(a, everything)).pending).toBe(0); // every dependency was applied at its creator
+      }),
+      RUNS
+    );
+  });
+
+  it('the result does not depend on the order the catch-up operations arrive in (buffer handles it)', () => {
+    fc.assert(
+      fc.property(stepsArb, fc.integer({ min: 1, max: 1_000_000 }), (steps, seed) => {
+        const inOrder = runReplicas(steps);
+        const shuffled = runReplicas(steps);
+        const everything = unionOps(inOrder);
+        syncToFixedPoint(inOrder);
+        syncToFixedPoint(shuffled, (ops) => shuffle(ops, seed));
+        for (let i = 0; i < 3; i++) expect(view(shuffled[i], everything)).toBe(view(inOrder[i], everything));
+      }),
+      RUNS
+    );
+  });
+
+  it('a late joiner gets everything from opsSince(empty vector) and matches the replica it asked', () => {
+    fc.assert(
+      fc.property(stepsArb, fc.integer({ min: 0, max: 2 }), (steps, which) => {
+        const replicas = runReplicas(steps);
+        const source = replicas[which];
+        const everything = unionOps(replicas);
+        const late = new CRDT<string>('late');
+        for (const op of source.opsSince(late.getVV())) expect(late.applyOp(op).status).toBe('applied'); // no buffering needed
+        expect(appliedView(late, everything)).toBe(appliedView(source, everything));
+        expect(late.getPendingCount()).toBe(0);
+      }),
+      RUNS
+    );
+  });
+
+  it('every operation returned has a seq above the peer\'s entry, and none above is left out', () => {
+    fc.assert(
+      fc.property(stepsArb, (steps) => {
+        const [a, b] = runReplicas(steps);
+        const sent = new Set(a.opsSince(b.getVV()).map((o) => o.id));
+        for (const op of a.getOps()) {
+          const seq = parseOpId(op.id)!.seq;
+          expect(sent.has(op.id)).toBe(seq > (b.getVV().get(op.replicaId) ?? 0));
+        }
+      }),
+      RUNS
+    );
+  });
+});
 describe('CRDT properties', () => {
   it('converges: any shuffle, with duplicates, of the same operations gives identical replicas (Property 1, 7, 8)', () => {
     fc.assert(

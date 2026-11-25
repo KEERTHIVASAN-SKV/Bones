@@ -421,6 +421,81 @@ describe('Lamport limit (F1)', () => {
   });
 });
 
+describe('opsSince (catch-up for a peer with a given version vector)', () => {
+  const ids = (ops: Operation<string>[]): string[] => ops.map((o) => o.id);
+
+  /** r1 makes r1:1, r1:2 and r1:3; r2 applies the first two and adds r2:1. */
+  function twoReplicas(): { r1: CRDT<string>; r2: CRDT<string>; a: Operation<string>; b: Operation<string>; c: Operation<string>; x: Operation<string> } {
+    const r1 = new CRDT<string>('r1');
+    const a = r1.insert(undefined, 'a');
+    const b = r1.insert(a.id, 'b');
+    const r2 = new CRDT<string>('r2');
+    r2.applyOp(a);
+    r2.applyOp(b);
+    const x = r2.insert(b.id, 'x');
+    const c = r1.insert(b.id, 'c');
+    return { r1, r2, a, b, c, x };
+  }
+
+  it('returns everything for a peer that has nothing, in log (causal) order', () => {
+    const { r1, a, b, c } = twoReplicas();
+    expect(ids(r1.opsSince(new Map()))).toEqual([a.id, b.id, c.id]);
+  });
+
+  it('returns nothing for a peer that is up to date, or ahead', () => {
+    const { r1 } = twoReplicas();
+    expect(r1.opsSince(r1.getVV())).toEqual([]);
+    expect(r1.opsSince(new Map([['r1', 99], ['r2', 99]]))).toEqual([]);
+  });
+
+  it('returns only the operations whose seq is above the peer\'s entry for that author', () => {
+    const { r1, r2, b, c, x } = twoReplicas();
+    r1.applyOp(x); // r1 now has r1:1..3 and r2:1
+    expect(ids(r1.opsSince(r2.getVV()))).toEqual([c.id]); // r2 has r1:1, r1:2, r2:1
+    // peer knows r1:1..2 only: it still lacks c (r1:3) and x (r2:1), in the order r1 applied them
+    const logOrder = ids(r1.getOps());
+    expect(logOrder.indexOf(c.id)).toBeLessThan(logOrder.indexOf(x.id)); // c was created before x was received
+    expect(ids(r1.opsSince(new Map([['r1', 2]])))).toEqual([c.id, x.id]);
+    expect(ids(r1.opsSince(new Map([['r1', 1], ['r2', 1]])))).toEqual([b.id, c.id]);
+  });
+
+  it('includes operations the replica received from other authors, not just its own', () => {
+    const { r1, x } = twoReplicas();
+    r1.applyOp(x);
+    expect(ids(r1.opsSince(new Map())).includes(x.id)).toBe(true);
+  });
+
+  it('does not include operations still waiting in the buffer (they are not applied here yet)', () => {
+    const r1 = new CRDT<string>('r1');
+    const a = r1.insert(undefined, 'a');
+    const b = r1.insert(a.id, 'b');
+    const peer = new CRDT<string>('peer');
+    peer.applyOp(b); // buffered
+    expect(peer.getPendingCount()).toBe(1);
+    expect(peer.opsSince(new Map())).toEqual([]);
+  });
+
+  it('returns a new array and does not change the replica', () => {
+    const { r1 } = twoReplicas();
+    const before = r1.getOps().length;
+    const out = r1.opsSince(new Map());
+    out.pop();
+    out.reverse();
+    expect(r1.getOps()).toHaveLength(before);
+    expect(r1.opsSince(new Map())).toHaveLength(before);
+  });
+
+  it('what it returns can be applied in the order given: no buffering needed', () => {
+    const { r1, r2, x } = twoReplicas();
+    r1.applyOp(x);
+    const late = new CRDT<string>('late');
+    for (const op of r1.opsSince(late.getVV())) expect(late.applyOp(op).status).toBe('applied');
+    expect(late.getPendingCount()).toBe(0);
+    expect(values(late)).toBe(values(r1));
+    void r2;
+  });
+});
+
 describe('queries return copies', () => {
   it('getSequence elements cannot be used to corrupt the CRDT', () => {
     const c = new CRDT<string>('r1');

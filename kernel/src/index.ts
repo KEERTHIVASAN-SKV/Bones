@@ -47,7 +47,7 @@ export { EventEmitter } from './events.js';
 export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 
 // Version-vector rules beyond the helpers in utils.ts
-export { advanceContiguous, stableFrontier } from './vv.js';
+export { advanceContiguous, computeVVDifference, stableFrontier } from './vv.js';
 
 // Dependency buffer for out-of-order operations
 export {

@@ -16,7 +16,7 @@ import {
   updateVersionVector,
 } from '../src/utils.js';
 import type { VersionVector } from '../src/types.js';
-import { advanceContiguous, stableFrontier } from '../src/vv.js';
+import { advanceContiguous, computeVVDifference, stableFrontier } from '../src/vv.js';
 
 const RUNS = { seed: 12345, numRuns: 200 } as const;
 const IDS = ['a', 'b', 'c', 'd.0', 'e.1'] as const;
@@ -235,6 +235,69 @@ describe('KER-014: deterministic serialization and cloning', () => {
         expect(entries(restored)).toEqual(entries(original));
         const json = stableStringify(plain);
         expect(stableStringify(serializeVersionVector(deserializeVersionVector(JSON.parse(json))))).toBe(json);
+      }),
+      RUNS
+    );
+  });
+});
+
+describe('KER-012: computeVVDifference (what a peer is missing)', () => {
+  const plain = (d: Map<string, { from: number; to: number }>): Array<[string, number, number]> =>
+    [...d.entries()].map(([id, r]) => [id, r.from, r.to] as [string, number, number]);
+
+  it('returns, per replica where local > remote, the range remote+1 .. local', () => {
+    expect(plain(computeVVDifference(vv({ a: 5, b: 2 }), vv({ a: 3, b: 2 })))).toEqual([['a', 4, 5]]);
+  });
+
+  it('treats a replica missing from the remote as 0: the whole range 1..local', () => {
+    expect(plain(computeVVDifference(vv({ a: 3 }), new Map()))).toEqual([['a', 1, 3]]);
+    expect(plain(computeVVDifference(vv({ a: 3, b: 1 }), vv({ a: 3 })))).toEqual([['b', 1, 1]]);
+  });
+
+  it('is empty when the remote has everything (equal or ahead) and when local is empty', () => {
+    expect(computeVVDifference(vv({ a: 3 }), vv({ a: 3 })).size).toBe(0);
+    expect(computeVVDifference(vv({ a: 3 }), vv({ a: 9, b: 4 })).size).toBe(0);
+    expect(computeVVDifference(new Map(), vv({ a: 1 })).size).toBe(0);
+    expect(computeVVDifference(new Map(), new Map()).size).toBe(0);
+  });
+
+  it('is directional: what A lacks and what B lacks are computed separately', () => {
+    const a = vv({ x: 5, y: 1 });
+    const b = vv({ x: 2, y: 4 });
+    expect(plain(computeVVDifference(a, b))).toEqual([['x', 3, 5]]);
+    expect(plain(computeVVDifference(b, a))).toEqual([['y', 2, 4]]);
+  });
+
+  it('lists replicas in code-unit order and does not mutate its inputs', () => {
+    const local = vv({ zeta: 2, alpha: 3, B: 1 });
+    const remote = new Map<string, number>();
+    const d = computeVVDifference(local, remote);
+    expect([...d.keys()]).toEqual(['B', 'alpha', 'zeta']);
+    expect(entries(local)).toEqual([['B', 1], ['alpha', 3], ['zeta', 2]]);
+    expect(remote.size).toBe(0);
+  });
+
+  it('property: the ranges are exactly the sequence numbers the remote lacks (brute force), and merging them closes the gap', () => {
+    fc.assert(
+      fc.property(vvArb, vvArb, (local, remote) => {
+        const d = computeVVDifference(local, remote);
+        let missing = 0;
+        for (const id of IDS) {
+          for (let seq = 1; seq <= get(local, id); seq++) if (seq > get(remote, id)) missing++;
+        }
+        let covered = 0;
+        for (const [id, r] of d) {
+          expect(r.from).toBe(get(remote, id) + 1);
+          expect(r.to).toBe(get(local, id));
+          expect(r.to).toBeGreaterThanOrEqual(r.from);
+          covered += r.to - r.from + 1;
+        }
+        expect(covered).toBe(missing);
+        // after receiving everything in the ranges, the remote is at least as far as local
+        const caughtUp = new Map(remote);
+        for (const [id, r] of d) caughtUp.set(id, r.to);
+        expect(isLE(local, caughtUp)).toBe(true);
+        expect(d.size === 0).toBe(isLE(local, remote));
       }),
       RUNS
     );

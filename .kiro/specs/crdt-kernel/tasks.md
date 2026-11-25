@@ -223,8 +223,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-004, KER-005
   - **Validation**: Unit test each function; verify immutability
 
-- [ ] 12. **VersionVector Partial Order and Causality** (KER-012)
-  - **Status note**: partial order, concurrency and transitivity are done and tested (`compareVersionVectors` in `utils.ts`). Still open: `computeVVDifference` (`Difference identifies missing operations`) has no function and no test yet.
+- [x] 12. **VersionVector Partial Order and Causality** (KER-012)
+  - **Status note**: done. Partial order, concurrency and transitivity: `compareVersionVectors` (`utils.ts`, tested incl. a seeded transitivity property). Difference: `computeVVDifference` (`vv.ts`), checked against a brute-force count; it feeds `CRDT.opsSince` for catch-up.
   - Implement `isVVLessOrEqual(vv1, vv2)` function: partial order check
   - Implement `areVVsConcurrent(vv1, vv2)` function: detect concurrent state
   - Implement `computeVVDifference(vv1, vv2)` function: missing entries
