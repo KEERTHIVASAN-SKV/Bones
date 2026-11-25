@@ -7,7 +7,7 @@
       "description": "When the agent finishes a turn, run purity, typecheck (src and tests), lint and tests for the kernel, and report any failure back to the agent.",
       "action": {
         "type": "command",
-        "command": "node scripts/quality-gate.mjs",
+        "command": "node scripts/quality-gate.mjs --hook",
         "timeout": 180
       }
     }

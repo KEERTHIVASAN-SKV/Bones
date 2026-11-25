@@ -57,7 +57,7 @@ Last verified run: typecheck, build, lint and purity clean; 82 tests pass; line 
 | Hook | Trigger | Does |
 |------|---------|------|
 | `kernel-purity-guard` | PostFileSave on `kernel/src/**/*.ts` | `node scripts/check-purity.mjs` |
-| `kernel-quality-gate` | Stop | `node scripts/quality-gate.mjs` |
+| `kernel-quality-gate` | Stop | `node scripts/quality-gate.mjs --hook` (reports a failure on stdout and exits 0; without the flag, manual and CI runs exit 1) |
 | `submission-check` | SessionStart | `node scripts/check-submission.mjs` |
 | `task-done-bookkeeping` | PostTaskExec | asks the agent to run the gate, tick `tasks.md` honestly, update this file, commit |
 
