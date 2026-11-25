@@ -8,7 +8,10 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      exclude: ['node_modules/', 'dist/']
+      // Measure only the kernel's source. Tests and config files must not inflate the number.
+      include: ['src/**/*.ts'],
+      // types.ts is type declarations only: it has no runtime code to cover.
+      exclude: ['src/types.ts', 'node_modules/', 'dist/']
     }
   }
 });
