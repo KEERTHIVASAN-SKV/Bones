@@ -513,7 +513,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: create CRDT → verify initial state
 
 - [ ] 32. **CRDT Core API (insert, delete, applyOp)** (KER-031)
-  - **Status note**: partly done: `insert`, `delete` and `applyOp` work and are mutation-checked and property-tested (validation, duplicate suppression, buffering on seq gap / missing anchor / missing target, iterative unblocking, no-op ops advance the VV, Lamport absorption, `sequenceChanged` at most once per call). `applyOp` returns an `ApplyResult` instead of `void`. **Open**: real fencing by author + cutoff (the fence check is a stub that accepts everything until membership exists), so the criterion "ops from non-active authors beyond their cutoff are rejected" is not met yet.
+  - **Status note**: partly done: `insert`, `delete` and `applyOp` work and are mutation-checked and property-tested (validation, duplicate suppression, buffering on seq gap / missing anchor / missing target, iterative unblocking, no-op ops advance the VV, Lamport absorption, `sequenceChanged` at most once per call; Lamport times limited to `MAX_LAMPORT`). `applyOp` returns an `ApplyResult` instead of `void`. **Open**: real fencing by author + cutoff (the fence check is a stub that accepts everything until membership exists), so the criterion "ops from non-active authors beyond their cutoff are rejected" is not met yet.
   - Implement public methods:
     - `insert(anchorId, value)` → Operation
     - `delete(elementId)` → Operation
@@ -533,7 +533,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: insert/delete/applyOp with various scenarios; verify state consistency
 
 - [ ] 33. **CRDT Query Methods** (KER-032)
-  - **Status note**: partly done: `getSequence`, `getVV`, `isElementDeleted` (plus `getOps`, `getPendingCount`, `getLamportClock`) return copies and are tested. **Open**: `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats` (they need membership, frontier and GC).
+  - **Status note**: partly done: `getSequence`, `getVV`, `isElementDeleted`, `getAllElements` (tombstones) and `opsSince` (catch-up), plus `getOps`, `getPendingCount`, `getLamportClock`, return copies and are tested. **Open**: `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats` (they need membership, frontier and GC).
   - Implement public methods:
     - `getSequence()` → Element[]
     - `getVV()` → VersionVector

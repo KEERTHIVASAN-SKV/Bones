@@ -1,6 +1,6 @@
 # Bones: Status
 
-Last updated: 2026-11-24 (after KER-010). Submission deadline: Dec 3, 2026.
+Last updated: 2026-11-25 (after the CRDT pipeline and fixes F1 to F4). Submission deadline: Dec 3, 2026.
 
 This is the only status document. Older ones are in `docs/archive/` and are historical.
 
@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 195 tests pass; line coverage of `kernel/src` only is 98.28% (`crdt.ts` 96.66%, `rga.ts` 98.6%, `utils.ts` 97.76%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+Last verified run: typecheck, build, lint and purity clean; 228 tests pass; line coverage of `kernel/src` only is 98.37% (`crdt.ts` 97.05%, `rga.ts` 98.63%, `utils.ts` 97.79%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
@@ -34,7 +34,7 @@ Last verified run: typecheck, build, lint and purity clean; 195 tests pass; line
 | KER-009 concurrent ordering | done: seeded property tests (convergence, idempotence, subtree contiguity, sibling order, Req 1.8). Mutation-checked: an oldest-first ordering fails 10 tests |
 | KER-010 payload reclamation primitive | done (markPayloadReclaimed; the GC decision logic is KER-023) |
 | KER-011 VV create / clone / merge / update | done (helpers in `utils.ts`; `updateVersionVector` now always returns a new Map) |
-| KER-012 VV partial order | partly done: `compareVersionVectors` (equal / before / after / concurrent) and transitivity are tested. **Open:** `computeVVDifference` ("difference identifies missing operations") has no function or test |
+| KER-012 VV partial order | done (`compareVersionVectors`: equal / before / after / concurrent, transitivity tested; `computeVVDifference` in `vv.ts` checked against a brute-force count) |
 | KER-013 contiguous prefix | done (`advanceContiguous` in `kernel/src/vv.ts`; never skips, never regresses) |
 | KER-014 VV serialization | done (keys inserted in code-unit order; mutation-checked with `advanceContiguous` and `stableFrontier`) |
 | `stableFrontier` helper | done (`kernel/src/vv.ts`; component-wise minimum, missing = 0). Callers must pass one VV per ACTIVE member |
@@ -45,7 +45,10 @@ Last verified run: typecheck, build, lint and purity clean; 195 tests pass; line
 | `assertValidOperation` (`utils.ts`) | done: validates operations that never passed `deserializeOp`; `CRDT.applyOp` uses it. 8 mutants caught |
 | KER-030 CRDT init | **partly done**, not ticked: replicaId, RGA, VV, log, buffer, clock exist. Open: membership state, GC state, snapshot init |
 | KER-031 insert / delete / applyOp | **partly done**, not ticked: pipeline, buffering, no-ops, Lamport absorption, events work (18 + 7 property tests, 20 mutants caught). Open: real fencing (stub accepts everything) |
-| KER-032 query methods | **partly done**, not ticked: `getSequence`, `getVV`, `isElementDeleted` (+ `getOps`, `getPendingCount`, `getLamportClock`). Open: membership view, causal stability, frontier, GC stats |
+| KER-032 query methods | **partly done**, not ticked: `getSequence`, `getVV`, `isElementDeleted`, `getAllElements` (tombstones), `opsSince` (catch-up) plus `getOps`, `getPendingCount`, `getLamportClock`. Open: membership view, causal stability, frontier, GC stats |
+| F1 Lamport limit | done: `MAX_LAMPORT` = 2^48; `assertValidOperation` rejects larger Lamport times (and unsafe epochs); a replica at the limit refuses local operations. Reproduced first: a forged `2**53` froze the clock (`clock + 1 === clock`) |
+| F3 catch-up | done: `computeVVDifference`, `CRDT.opsSince`; sync property tests. Finding: a peer holding buffered operations can only send what it has applied, so catch-up can take more than one round; repeating the exchange converges |
+| F4 tombstones | done: `CRDT.getAllElements()` returns every element including deleted ones, as copies |
 | KER-018 onward (membership, fencing, GC, snapshots) | not started. Next: membership view + epochs + cutoffs (KER-018 to KER-022), real fencing in `applyOp`, then stable frontier + GC |
 
 ## Source of truth

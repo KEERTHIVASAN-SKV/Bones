@@ -11,7 +11,7 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 | Kernel setup, types, utilities, event emitter (KER-001 to KER-005) | done |
 | Kernel RGA: insert, delete and tombstones, sequence queries, payload reclamation primitive (KER-006 to KER-010) | done, with seeded property tests |
 | Kernel version-vector rules (`advanceContiguous`, `stableFrontier`), append-only op log with replay, dependency buffer (KER-011, 013 to 017) | done, tested; mutation-checked |
-| Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries, events | working and tested; **fencing is a stub** (accepts everything) until membership exists |
+| Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries (including `opsSince` for catch-up and `getAllElements` for tombstones), events, Lamport-time limit | working and tested; **fencing is a stub** (accepts everything) until membership exists |
 | Kernel membership and eviction, stable frontier, Stage 1 GC, snapshots and rejoin | not started |
 | `coordinator/` | placeholder |
 | `apps/graveyard-whiteboard`, `apps/cursed-checklist` | placeholders (the two separate app folders the Skeleton Crew category requires) |
@@ -108,11 +108,15 @@ bob.applyOp(i);                           // out-of-order or duplicate delivery 
 
 bob.getSequence();                        // visible elements, in order (copies)
 bob.getVV();                              // highest contiguous applied seq per replica
+bob.getAllElements();                     // every element INCLUDING tombstones (for the Graveyard panel)
+alice.opsSince(bob.getVV());              // what bob still lacks, in causal order (catch-up)
 bob.delete(i.id);                         // tombstone an element; returns the operation to broadcast
 bob.on('sequenceChanged', () => render());
 ```
 
-`applyOp` outcomes: `applied` (possibly unblocking buffered operations), `buffered` (a dependency is missing; never dropped, version vector not advanced), `duplicate`, `fenced` (not produced yet: fencing is a stub). Malformed operations throw `TypeError` and change nothing. Use `deserializeOp` for operations received as JSON and `assertValidOperation` for any other untrusted operation.
+`applyOp` outcomes: `applied` (possibly unblocking buffered operations), `buffered` (a dependency is missing; never dropped, version vector not advanced), `duplicate`, `fenced` (not produced yet: fencing is a stub). Malformed operations throw `TypeError` and change nothing; that includes a Lamport time above `MAX_LAMPORT` (2^48), and a replica whose own clock reaches that limit refuses further local operations (`RangeError`). Use `deserializeOp` for operations received as JSON and `assertValidOperation` for any other untrusted operation.
+
+Catch-up: a transport that does not replay old messages (for example `BroadcastChannel`) should have each replica send its version vector now and then and answer a peer's vector with `opsSince(thatVector)`. A peer holding buffered operations can only send what it has applied, so catching up can take more than one round; repeating the exchange converges.
 
 Planned, not implemented yet:
 
@@ -173,8 +177,9 @@ type VersionVector = Map<string, number>;   // replicaId -> highest contiguous a
 - Delete-before-insert converges to the same result as insert-before-delete.
 - The log holds each operation once, in an order that replays without buffering.
 - A local insert at visible index k lands at index k after convergence, on both replicas (this fails without Lamport-clock absorption).
+- Catch-up: repeating the `opsSince` exchange converges two or three replicas (and a late joiner), whatever order the catch-up operations arrive in.
 
-The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 50 distinct deliberate bugs in total), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
+The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 75 distinct deliberate bugs in total), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
 
 ## Specification
 
@@ -191,7 +196,7 @@ Full specification documents are in `.kiro/specs/crdt-kernel/`:
 - No sharding: every replica holds the whole document.
 - Sequence (RGA) only: no maps, sets or counters.
 - An evicted peer cannot merge old edits beyond its cutoff; it must rejoin from a snapshot as a new replica.
-- The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly.
+- The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly. The kernel also does not limit the size of the dependency buffer: a peer that sends many operations with a gap before them makes all of them stay buffered (5,000 were tried), so it assumes peers are honest.
 - Educational scope: not optimized for production performance.
 
 ## Prior art
