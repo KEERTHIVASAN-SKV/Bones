@@ -498,6 +498,7 @@ Applications (KER-078 to KER-080)
 ### Phase 3: CRDT Orchestrator
 
 - [ ] 31. **CRDT Class Initialization and State Management** (KER-030)
+  - **Status note**: partly done in `kernel/src/crdt.ts`: the class initializes with a validated replicaId and holds the RGA, VV, OpLog, dependency buffer, Lamport clock and event emitter. **Open** (so the box stays unticked): membership state, GC state, and snapshot-based initialization (`CRDT.fromSnapshot`).
   - Create `src/crdt.ts` with main CRDT class
   - Initialize RGA, VV, OpLog, Membership, GC state
   - Track current sequence number for this replica
@@ -512,6 +513,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: create CRDT → verify initial state
 
 - [ ] 32. **CRDT Core API (insert, delete, applyOp)** (KER-031)
+  - **Status note**: partly done: `insert`, `delete` and `applyOp` work and are mutation-checked and property-tested (validation, duplicate suppression, buffering on seq gap / missing anchor / missing target, iterative unblocking, no-op ops advance the VV, Lamport absorption, `sequenceChanged` at most once per call). `applyOp` returns an `ApplyResult` instead of `void`. **Open**: real fencing by author + cutoff (the fence check is a stub that accepts everything until membership exists), so the criterion "ops from non-active authors beyond their cutoff are rejected" is not met yet.
   - Implement public methods:
     - `insert(anchorId, value)` → Operation
     - `delete(elementId)` → Operation
@@ -531,6 +533,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: insert/delete/applyOp with various scenarios; verify state consistency
 
 - [ ] 33. **CRDT Query Methods** (KER-032)
+  - **Status note**: partly done: `getSequence`, `getVV`, `isElementDeleted` (plus `getOps`, `getPendingCount`, `getLamportClock`) return copies and are tested. **Open**: `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats` (they need membership, frontier and GC).
   - Implement public methods:
     - `getSequence()` → Element[]
     - `getVV()` → VersionVector

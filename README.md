@@ -10,11 +10,13 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 |------|-------|
 | Kernel setup, types, utilities, event emitter (KER-001 to KER-005) | done |
 | Kernel RGA: insert, delete and tombstones, sequence queries, payload reclamation primitive (KER-006 to KER-010) | done, with seeded property tests |
-| Kernel op log, dependency buffering, membership and fencing, GC, snapshots, and the `CRDT` class | not started |
+| Kernel version-vector rules (`advanceContiguous`, `stableFrontier`), append-only op log with replay, dependency buffer (KER-011, 013 to 017) | done, tested; mutation-checked |
+| Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries, events | working and tested; **fencing is a stub** (accepts everything) until membership exists |
+| Kernel membership and eviction, stable frontier, Stage 1 GC, snapshots and rejoin | not started |
 | `coordinator/` | placeholder |
 | `apps/graveyard-whiteboard`, `apps/cursed-checklist` | placeholders (the two separate app folders the Skeleton Crew category requires) |
 
-The `CRDT` class shown below is the planned public API. It does not exist yet.
+Two replicas can already exchange operations and converge (see the example below). Membership, eviction, GC and snapshots are the next pieces; until they exist, `CRDT` accepts operations from any author.
 
 ## Run it
 
@@ -88,23 +90,39 @@ Limits, stated plainly:
 - That gap is covered by CI (`.github/workflows/ci.yml`), which runs the same quality gate and the submission check on every push and pull request.
 - The hooks have not been exercised in a long unattended agent run. Treat them as guard rails, not as proof of correctness.
 
-## Planned public API (not implemented yet)
+## Public API (kernel/src/index.ts)
+
+Working today:
 
 ```typescript
-const crdt = new CRDT('site1.0');
+import { CRDT } from './kernel/src/index.js';
 
-const a = crdt.insert(undefined, 'Hello');   // insert at the start
-const b = crdt.insert(a.id, ' World');       // insert after element a
+const alice = new CRDT<string>('site1.0');
+const bob = new CRDT<string>('site2.0');
 
-crdt.getSequence();                          // visible Element[] in order
-crdt.getVV();                                // version vector
+const h = alice.insert(undefined, 'H');   // insert at the start; returns the operation to broadcast
+const i = alice.insert(h.id, 'i');        // insert right after h
 
-crdt.applyOp(remoteOp);                      // apply an operation from another replica
+bob.applyOp(h);                           // returns { status, changed, unblocked, fenced }
+bob.applyOp(i);                           // out-of-order or duplicate delivery is fine: buffered or ignored
 
-const snapshot = crdt.snapshot();
-const rejoined = CRDT.fromSnapshot(snapshot, 'site1.1'); // a returning replica uses a NEW replica ID
+bob.getSequence();                        // visible elements, in order (copies)
+bob.getVV();                              // highest contiguous applied seq per replica
+bob.delete(i.id);                         // tombstone an element; returns the operation to broadcast
+bob.on('sequenceChanged', () => render());
 ```
 
+`applyOp` outcomes: `applied` (possibly unblocking buffered operations), `buffered` (a dependency is missing; never dropped, version vector not advanced), `duplicate`, `fenced` (not produced yet: fencing is a stub). Malformed operations throw `TypeError` and change nothing. Use `deserializeOp` for operations received as JSON and `assertValidOperation` for any other untrusted operation.
+
+Planned, not implemented yet:
+
+```typescript
+const snapshot = alice.snapshot();
+const rejoined = CRDT.fromSnapshot(snapshot, 'site1.1'); // a returning replica uses a NEW replica ID
+alice.getStableFrontier();
+alice.getGCStats();
+alice.getMembershipView();
+```
 ## Core types
 
 From `kernel/src/types.ts`:
@@ -138,7 +156,7 @@ type VersionVector = Map<string, number>;   // replicaId -> highest contiguous a
 
 ## Property tests
 
-18 correctness properties are specified in `design.md`. Implemented so far (all seeded, 200 runs each), for the RGA:
+18 correctness properties are specified in `design.md`. Implemented so far (all seeded, 150 to 200 runs each). RGA:
 
 - Convergence: any causal delivery order gives the identical sequence.
 - Idempotence: re-applying operations changes nothing.
@@ -147,7 +165,16 @@ type VersionVector = Map<string, number>;   // replicaId -> highest contiguous a
 - A delete changes visibility only, never structural order.
 - A local insert at visible index k lands at visible index k.
 
-The test suite was also mutation-checked by hand: flipping the sibling order, or removing the replicaId tie-break, makes tests fail.
+`CRDT` (multi-replica, with partial syncs, concurrent edits and concurrent duplicate deletes):
+
+- Convergence: any shuffle of the same operations, with duplicates, gives identical replicas, including the original authors.
+- Idempotence: delivering everything again changes nothing and emits no event.
+- Version-vector contiguity: it never skips, never regresses, equals the applied prefix, and buffered operations never advance it.
+- Delete-before-insert converges to the same result as insert-before-delete.
+- The log holds each operation once, in an order that replays without buffering.
+- A local insert at visible index k lands at index k after convergence, on both replicas (this fails without Lamport-clock absorption).
+
+The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 50 distinct deliberate bugs in total), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
 
 ## Specification
 

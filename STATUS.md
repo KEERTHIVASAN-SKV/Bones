@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 125 tests pass; line coverage of `kernel/src` only is 97.33% (`oplog.ts` 100%, `vv.ts` 100%, `rga.ts` 98.6%, `events.ts` 97.5%, `utils.ts` 95.45%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+Last verified run: typecheck, build, lint and purity clean; 195 tests pass; line coverage of `kernel/src` only is 98.28% (`crdt.ts` 96.66%, `rga.ts` 98.6%, `utils.ts` 97.76%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
@@ -41,7 +41,12 @@ Last verified run: typecheck, build, lint and purity clean; 125 tests pass; line
 | KER-015 op log append / query | done (`kernel/src/oplog.ts`; append-only, application order) |
 | KER-016 op log dedup | done (Op ID set, O(1); 20,000 appends + checks tested) |
 | KER-017 deterministic replay | done (`replayLog`, plus `cloneRGA` in `rga.ts`; split replay equals full replay) |
-| KER-018 onward | not started. Next: dependency buffer helpers and the `CRDT` class (KER-030 to KER-032), then membership |
+| dependency buffer (`kernel/src/buffer.ts`) | done: indexed unblocking, fence purge, capped `missing` cache. A 5,000-op reverse chain needs <= 3n readiness checks. 12 mutants caught |
+| `assertValidOperation` (`utils.ts`) | done: validates operations that never passed `deserializeOp`; `CRDT.applyOp` uses it. 8 mutants caught |
+| KER-030 CRDT init | **partly done**, not ticked: replicaId, RGA, VV, log, buffer, clock exist. Open: membership state, GC state, snapshot init |
+| KER-031 insert / delete / applyOp | **partly done**, not ticked: pipeline, buffering, no-ops, Lamport absorption, events work (18 + 7 property tests, 20 mutants caught). Open: real fencing (stub accepts everything) |
+| KER-032 query methods | **partly done**, not ticked: `getSequence`, `getVV`, `isElementDeleted` (+ `getOps`, `getPendingCount`, `getLamportClock`). Open: membership view, causal stability, frontier, GC stats |
+| KER-018 onward (membership, fencing, GC, snapshots) | not started. Next: membership view + epochs + cutoffs (KER-018 to KER-022), real fencing in `applyOp`, then stable frontier + GC |
 
 ## Source of truth
 

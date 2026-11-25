@@ -180,8 +180,9 @@ class CRDT<T> {
   insert(anchorId: OpIdKey | undefined, value: T): Operation<T>;
   delete(elementId: OpIdKey): Operation<T>;
 
-  // Apply remote op
-  applyOp(op: Operation<T>): void;
+  // Apply any op (local ops go through the same pipeline). Malformed op: TypeError, state untouched.
+  // status: 'applied' | 'buffered' | 'duplicate' | 'fenced'
+  applyOp(op: Operation<T>): ApplyResult;
 
   // Queries (read-only)
   getSequence(): Element<T>[];
@@ -191,6 +192,7 @@ class CRDT<T> {
   isCausallyStable(opId: OpIdKey): boolean;
   getStableFrontier(): VersionVector;
   getGCStats(): GCStats;
+  // Also implemented: readonly replicaId; getOps() (the applied-op log); getPendingCount(); getLamportClock()
 
   // Events
   on(event: 'sequenceChanged' | 'membershipChanged' | 'gcEvent', cb: () => void): void;
