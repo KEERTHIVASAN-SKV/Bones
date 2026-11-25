@@ -183,6 +183,20 @@ describe('applyInsert and traversal', () => {
     expect(rga.children.get('HEAD')).toEqual([root.id]);
   });
 
+  it('KNOWN LIMITATION (E9): a second op reusing an existing ID is ignored even if its contents differ', () => {
+    // Correct for honest replicas (a duplicate is identical). It gives NO protection against a
+    // buggy or malicious peer that sends a conflicting op under an ID that was already used:
+    // the kernel assumes replicas do not forge or alter operations. The README states this.
+    const rga = createRGA<string>();
+    const original = ins('r1', 1, undefined, 1, 'original');
+    const forged = ins('r1', 1, undefined, 99, 'FORGED'); // same id, different value and lamport
+    expect(applyInsert(rga, original)).toBe(true);
+    expect(applyInsert(rga, forged)).toBe(false);
+    const el = rga.elements.get(original.id)!;
+    expect(el.value).toBe('original');
+    expect(el.lamport).toBe(1);
+  });
+
   it('refuses an insert whose anchor has not been applied (caller must buffer it)', () => {
     const rga = createRGA<string>();
     const orphan = ins('r1', 2, createOpId('r1', 1), 2, 'x');

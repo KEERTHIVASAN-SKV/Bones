@@ -164,6 +164,7 @@ Full specification documents are in `.kiro/specs/crdt-kernel/`:
 - No sharding: every replica holds the whole document.
 - Sequence (RGA) only: no maps, sets or counters.
 - An evicted peer cannot merge old edits beyond its cutoff; it must rejoin from a snapshot as a new replica.
+- The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly.
 - Educational scope: not optimized for production performance.
 
 ## Prior art
