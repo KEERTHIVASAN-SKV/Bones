@@ -16,6 +16,8 @@ import {
   markPayloadReclaimed,
   traverse,
   compareSiblingKeys,
+  advanceContiguous,
+  stableFrontier,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -32,6 +34,8 @@ describe('public API (index.ts) exposes the RGA', () => {
       markPayloadReclaimed,
       traverse,
       compareSiblingKeys,
+      advanceContiguous,
+      stableFrontier,
     ]) {
       expect(typeof fn).toBe('function');
     }

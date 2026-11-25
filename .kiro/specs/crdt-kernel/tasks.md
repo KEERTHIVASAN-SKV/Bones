@@ -206,7 +206,7 @@ Applications (KER-078 to KER-080)
 
 #### VersionVector Module
 
-- [ ] 11. **VersionVector Operations (Create, Clone, Query)** (KER-011)
+- [x] 11. **VersionVector Operations (Create, Clone, Query)** (KER-011)
   - Create `src/vv.ts` with:
     - `createVV()`: initialize empty VV (all entries 0)
     - `cloneVV(vv)`: deep copy for immutability
@@ -224,6 +224,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test each function; verify immutability
 
 - [ ] 12. **VersionVector Partial Order and Causality** (KER-012)
+  - **Status note**: partial order, concurrency and transitivity are done and tested (`compareVersionVectors` in `utils.ts`). Still open: `computeVVDifference` (`Difference identifies missing operations`) has no function and no test yet.
   - Implement `isVVLessOrEqual(vv1, vv2)` function: partial order check
   - Implement `areVVsConcurrent(vv1, vv2)` function: detect concurrent state
   - Implement `computeVVDifference(vv1, vv2)` function: missing entries
@@ -237,7 +238,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-011
   - **Validation**: Unit test partial order properties; PBT: verify transitivity over random VVs
 
-- [ ] 13. **Contiguous Prefix Rule Enforcement** (KER-013)
+- [x] 13. **Contiguous Prefix Rule Enforcement** (KER-013)
   - Implement `advanceContiguous(currentVV, replicaId, seq)` function (design.md Algorithm 4): advance only when `seq === VV[replicaId] + 1`; otherwise return the VV unchanged (gap, or already counted). The VV never decreases.
   - The orchestrator calls it for EVERY applied op, including no-ops; buffered ops never call it
   - The contiguity rule is enforced here and in the orchestrator's readiness check (`isReady`); `updateVersionVector` in `utils.ts` is max-based and must NOT be used to advance the VV when applying ops
@@ -252,7 +253,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-011
   - **Validation**: Unit test: apply ops out of order → verify VV stalls; then fill gap → verify VV advances
 
-- [ ] 14. **VersionVector Serialization and Cloning** (KER-014)
+- [x] 14. **VersionVector Serialization and Cloning** (KER-014)
   - Implement deterministic serialization (JSON with sorted keys)
   - Implement deep cloning for safety
   - Use code-unit comparison for replicaId ordering in serialization:  a < b ? -1 : a > b ? 1 : 0 (no localeCompare)

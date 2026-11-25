@@ -44,6 +44,9 @@ export {
 export { EventEmitter } from './events.js';
 export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 
+// Version-vector rules beyond the helpers in utils.ts
+export { advanceContiguous, stableFrontier } from './vv.js';
+
 // Replicated Growable Array (anchor tree)
 export {
   createRGA, applyInsert, applyDelete, insert, delete_,
