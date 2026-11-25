@@ -34,6 +34,8 @@ import {
   refreshMissing,
   assertValidOperation,
   MAX_LAMPORT,
+  computeVVDifference,
+  getAllElements,
   CRDT,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
@@ -68,6 +70,8 @@ describe('public API (index.ts) exposes the RGA', () => {
       purgeFencedBuffered,
       refreshMissing,
       assertValidOperation,
+      computeVVDifference,
+      getAllElements,
     ]) {
       expect(typeof fn).toBe('function');
     }
@@ -86,6 +90,37 @@ describe('public API (index.ts) exposes the RGA', () => {
     const text = (r: CRDT<string>): string => r.getSequence().map((e) => e.value).join('');
     expect(text(a)).toBe(text(b));
     expect(text(a)).toHaveLength(3);
+  });
+
+  it('catch-up works through the public entry point: opsSince, computeVVDifference and getAllElements', () => {
+    const a = new CRDT<string>('site1.0');
+    const b = new CRDT<string>('site2.0');
+    const h = a.insert(undefined, 'H');
+    const i = a.insert(h.id, 'i');
+    a.delete(i.id);
+
+    // b has nothing: the difference says a is ahead by 3 operations of its own
+    expect(computeVVDifference(a.getVV(), b.getVV()).get('site1.0')).toEqual({ from: 1, to: 3 });
+    const missing = a.opsSince(b.getVV());
+    expect(missing).toHaveLength(3);
+    for (const op of missing) expect(b.applyOp(op).status).toBe('applied');
+
+    expect(computeVVDifference(a.getVV(), b.getVV()).size).toBe(0);
+    expect(a.opsSince(b.getVV())).toEqual([]);
+    expect(b.getSequence().map((e) => e.value)).toEqual(['H']);
+    // the tombstone is visible through the public API, on both replicas
+    for (const replica of [a, b]) {
+      expect(replica.getAllElements().map((e) => [e.value, e.deleted])).toEqual([['H', false], ['i', true]]);
+    }
+  });
+
+  it('getAllElements (RGA level) is reachable from the entry point and returns tombstones', () => {
+    const rga = createRGA<string>();
+    const op: Operation<string> = { id: createOpId('r1', 1), type: 'insert', value: 'x', lamport: 1, replicaId: 'r1' };
+    applyInsert(rga, op);
+    applyDelete(rga, { id: createOpId('r2', 1), type: 'delete', target: op.id, lamport: 2, replicaId: 'r2' });
+    expect(getSequence(rga)).toEqual([]);
+    expect(getAllElements(rga)).toHaveLength(1);
   });
 
   it('runs the CAT/A/X example through the public entry point', () => {
