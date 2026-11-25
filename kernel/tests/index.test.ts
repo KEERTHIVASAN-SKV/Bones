@@ -27,6 +27,12 @@ import {
   getOpAt,
   logLength,
   replayLog,
+  createOperationBuffer,
+  bufferOp,
+  takeReadyFromBuffer,
+  purgeFencedBuffered,
+  refreshMissing,
+  assertValidOperation,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -54,6 +60,12 @@ describe('public API (index.ts) exposes the RGA', () => {
       getOpAt,
       logLength,
       replayLog,
+      createOperationBuffer,
+      bufferOp,
+      takeReadyFromBuffer,
+      purgeFencedBuffered,
+      refreshMissing,
+      assertValidOperation,
     ]) {
       expect(typeof fn).toBe('function');
     }

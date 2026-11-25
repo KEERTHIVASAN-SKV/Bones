@@ -48,6 +48,13 @@ export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 // Version-vector rules beyond the helpers in utils.ts
 export { advanceContiguous, stableFrontier } from './vv.js';
 
+// Dependency buffer for out-of-order operations
+export {
+  createOperationBuffer, bufferOp, takeReadyFromBuffer, purgeFencedBuffered,
+  refreshMissing, DEFAULT_MISSING_LIMIT,
+} from './buffer.js';
+export type { BufferChecks } from './buffer.js';
+
 // Operation log
 export {
   createOpLog, appendOp, shouldAppendOp, getAllOps, getOpsByReplica,

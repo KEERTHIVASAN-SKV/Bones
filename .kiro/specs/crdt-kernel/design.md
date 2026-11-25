@@ -548,7 +548,7 @@ function applyOp<T>(state: ReplicaState<T>, op: Operation<T>): ApplyResult {
 
   // 3. Dependencies: previous seq of this author, and anchor (insert) or target (delete).
   if (!isReady(state, op)) {
-    bufferOp(state, op);               // never dropped
+    bufferOp(state.buffer, op, (id) => state.rga.elements.has(id));   // never dropped
     return { status: 'buffered', changed: false, unblocked: [], fenced: [] };
   }
 
@@ -562,7 +562,7 @@ function applyOp<T>(state: ReplicaState<T>, op: Operation<T>): ApplyResult {
     const next = queue[head];
     if (applyReadyOp(state, next)) changed = true;
     if (next !== op) unblocked.push(next.id);
-    for (const ready of takeReadyFromBuffer(state, next, fenced)) queue.push(ready);
+    for (const ready of takeReadyFromBuffer(state.buffer, next, bufferChecks(state), fenced)) queue.push(ready);
   }
   return { status: 'applied', changed, unblocked, fenced };
 }
@@ -582,80 +582,41 @@ function applyReadyOp<T>(state: ReplicaState<T>, op: Operation<T>): boolean {
   return changed;   // used only to decide whether to emit 'sequenceChanged'
 }
 
-// Buffer an op that is not ready, and index the element it is waiting for (if that
-// element has not been applied yet) so that applying the element finds this op directly.
-function bufferOp<T>(state: ReplicaState<T>, op: Operation<T>): void {
-  state.buffer.ops.set(op.id, op);
-  const dependency = op.type === 'insert' ? op.anchor : op.target;
-  if (dependency !== undefined && !state.rga.elements.has(dependency)) {
-    let waiters = state.buffer.waiting.get(dependency);
-    if (waiters === undefined) { waiters = new Set(); state.buffer.waiting.set(dependency, waiters); }
-    waiters.add(op.id);
-  }
-  recomputeMissing(state);
+// The buffer helpers are implemented in kernel/src/buffer.ts. They know nothing about the RGA
+// or the version vector: the orchestrator passes predicates.
+function bufferChecks<T>(state: ReplicaState<T>): BufferChecks<T> {
+  return {
+    isReady: (op) => isReady(state, op),
+    isFenced: (op) => isFenced(state.membership, op.replicaId, seqOf(op)),
+  };
 }
 
-// After `applied` was applied, find the buffered ops it can unblock. Only two things can
-// make a waiting op ready, and each has a direct lookup (no rescan of the whole buffer):
-//   1. the next seq from the same author  -> buffer.ops.get(createOpId(author, seq + 1))
-//   2. ops waiting for the element this op created (if it was an insert) -> buffer.waiting.get(applied.id)
-// Ready ops are removed from the buffer and returned. A candidate that became fenced while
-// it waited (membership changed) is removed and reported in `fenced`: an explicit
-// rejection, not a silent loss.
-function takeReadyFromBuffer<T>(
-  state: ReplicaState<T>,
-  applied: Operation<T>,
-  fenced: OpIdKey[]
-): Operation<T>[] {
-  const candidates = new Set<OpIdKey>();
-  const nextSeqId = createOpId(applied.replicaId, seqOf(applied) + 1);
-  if (state.buffer.ops.has(nextSeqId)) candidates.add(nextSeqId);
-  if (applied.type === 'insert') {
-    const waiters = state.buffer.waiting.get(applied.id);
-    if (waiters !== undefined) {
-      for (const id of waiters) candidates.add(id);
-      state.buffer.waiting.delete(applied.id);
-    }
-  }
-
-  const ready: Operation<T>[] = [];
-  for (const id of candidates) {
-    const buffered = state.buffer.ops.get(id);
-    if (buffered === undefined) continue;            // already taken or fenced earlier
-    if (isFenced(state.membership, buffered.replicaId, seqOf(buffered))) {
-      state.buffer.ops.delete(id);
-      fenced.push(id);
-    } else if (isReady(state, buffered)) {
-      state.buffer.ops.delete(id);
-      ready.push(buffered);
-    }
-    // else: still blocked on its other dependency. It stays buffered and the other
-    // dependency's own trigger (1 or 2 above) will reconsider it.
-  }
-  recomputeMissing(state);
-  return ready;
-}
-
-// Used when the membership changes: reject every buffered op that is now fenced.
-// (A full scan is fine here; membership changes are rare.)
-function purgeFencedBuffered<T>(state: ReplicaState<T>): OpIdKey[] {
-  const fenced: OpIdKey[] = [];
-  for (const [id, buffered] of state.buffer.ops) {   // deleting the current entry while iterating a Map is safe
-    if (isFenced(state.membership, buffered.replicaId, seqOf(buffered))) {
-      state.buffer.ops.delete(id);
-      fenced.push(id);
-    }
-  }
-  recomputeMissing(state);
-  return fenced;
-}
-
-// missing[r] = seqs s with VV[r] < s < (largest buffered seq from r) and (r, s) not buffered.
-function recomputeMissing<T>(state: ReplicaState<T>): void { /* derives state.buffer.missing */ }
+//   bufferOp(buffer, op, hasElement)
+//       Store the op by ID; if its anchor/target is not applied yet, index it in `waiting`.
+//
+//   takeReadyFromBuffer(buffer, applied, { isReady, isFenced }, fenced): Operation[]
+//       After `applied` was applied, only two things can make a waiting op ready, and each has
+//       a direct lookup (no rescan of the whole buffer):
+//         1. the next seq from the same author -> buffer.ops.get(createOpId(author, seq + 1))
+//         2. ops waiting for the element this op created (if it was an insert) -> buffer.waiting.get(applied.id)
+//       A fenced candidate is removed and reported in `fenced` (an explicit rejection, not a
+//       silent loss). A ready candidate is removed and returned. A candidate still blocked by
+//       its OTHER dependency stays buffered; that dependency's own trigger reconsiders it.
+//
+//   purgeFencedBuffered(buffer, isFenced): OpIdKey[]
+//       On a membership change: remove and report every buffered op that is now fenced.
+//       (A full scan is fine; membership changes are rare.)
+//
+//   refreshMissing(buffer, vv, limit = 1000): void
+//       Rebuilds the `missing` field: per replica, the seqs after VV[r] and before its highest
+//       buffered seq that are not buffered. `missing` is a CACHE refreshed ON DEMAND (when a
+//       sync request is built), NOT on every buffer change: refreshing on every change rescans
+//       the buffer each time and makes draining quadratic. The list is capped per replica
+//       (lowest first) so a peer claiming seq 2,000,000,000 cannot allocate billions of entries.
 ```
 
 **Notes**
-- `isReady` is defined with `OperationBuffer` in Data Models. Readiness only ever becomes true over time (the VV and the element set only grow), so an op that is ready when queued is still ready when applied.
+- `isReady` is defined with `OperationBuffer` in Data Models; `buffer.ts` receives it (and `isFenced`) as predicates. Readiness only ever becomes true over time (the VV and the element set only grow), so an op that is ready when queued is still ready when applied.
 - Events (orchestrator): emit `sequenceChanged` only when `changed`; emit the diagnostic `bufferUnblocked` when `unblocked` is non-empty.
 - When membership changes (`updateMembership`), call `purgeFencedBuffered` so buffered ops from newly evicted authors beyond their cutoff are rejected. (Membership changes never make an op ready that was not, so nothing needs draining.)
 - The op is appended to the OpLog when it is applied (not when it is merely buffered), so log order is always a valid causal replay order (Requirement 3.3).
