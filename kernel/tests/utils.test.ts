@@ -21,6 +21,7 @@ import {
   assertValidOperation,
   buildOpIndex,
   estimatePayloadSize,
+  MAX_LAMPORT,
 } from '../src/utils.js';
 import type { Element, Operation } from '../src/types.js';
 
@@ -266,6 +267,27 @@ describe('assertValidOperation (for operations that never passed through deseria
     expect(() => assertValidOperation(lookslikeDelete)).toThrow(/"type" must be/);
     const lookslikeInsert = { id: 'r2:1', type: 'upsert', value: 'x', lamport: 4, replicaId: 'r2' };
     expect(() => assertValidOperation(lookslikeInsert)).toThrow(/"type" must be/);
+  });
+
+  it('enforces the Lamport limit: only safe integers in [0, MAX_LAMPORT] are accepted (F1)', () => {
+    expect(MAX_LAMPORT).toBe(2 ** 48);
+    for (const lamport of [0, 1, 2 ** 32, MAX_LAMPORT]) {
+      expect(() => assertValidOperation({ ...good(), lamport })).not.toThrow();
+    }
+    // 2**53 and 1e300 are what a forged op would use: clock + 1 === clock for them.
+    // 2**53 - 1 is a safe integer but still beyond the kernel limit.
+    for (const lamport of [MAX_LAMPORT + 1, 2 ** 53 - 1, 2 ** 53, 1e300, Infinity, -Infinity, Number.NaN]) {
+      expect(() => assertValidOperation({ ...good(), lamport })).toThrow(/\[0, MAX_LAMPORT\]/);
+    }
+  });
+
+  it('applies the safe-integer check to epoch too (F1)', () => {
+    for (const epoch of [0, 1, 2 ** 53 - 1]) {
+      expect(() => assertValidOperation({ ...good(), epoch })).not.toThrow();
+    }
+    for (const epoch of [2 ** 53, 1e300, Infinity, Number.NaN, -1, 1.5]) {
+      expect(() => assertValidOperation({ ...good(), epoch })).toThrow(/"epoch" must be/);
+    }
   });
 
   it('rejects inconsistent insert/delete fields', () => {

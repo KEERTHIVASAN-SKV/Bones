@@ -33,6 +33,7 @@ import {
   purgeFencedBuffered,
   refreshMissing,
   assertValidOperation,
+  MAX_LAMPORT,
   CRDT,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
@@ -74,6 +75,7 @@ describe('public API (index.ts) exposes the RGA', () => {
 
   it('exports the CRDT class, and two replicas converge through the public entry point', () => {
     expect(typeof CRDT).toBe('function');
+    expect(MAX_LAMPORT).toBe(2 ** 48);
     const a = new CRDT<string>('site1.0');
     const b = new CRDT<string>('site2.0');
     const c = a.insert(undefined, 'C');

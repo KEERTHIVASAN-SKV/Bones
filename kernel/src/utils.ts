@@ -324,14 +324,24 @@ export function serializeOp<T>(op: Operation<T>): string {
 }
 
 /**
+ * Largest Lamport time the kernel accepts or creates: 2^48, far beyond any real session.
+ *
+ * Why a limit: above 2^53 a JavaScript number cannot represent `clock + 1`, so a forged
+ * operation with `lamport: 2**53` (or `1e300`) would freeze a replica's clock. Its later local
+ * operations would then get the SAME Lamport time as earlier ones and stop sorting as the newest
+ * sibling, which breaks the rule that a local insert lands right after its anchor.
+ */
+export const MAX_LAMPORT = 2 ** 48;
+
+/**
  * Check that a value is a well-formed Operation. Use it on any operation that did not come
  * through `deserializeOp` (tests, in-process peers, application code): the kernel trusts
  * `op.replicaId` for fencing, so it must really be the author named in `op.id`.
  *
  * Validated: `id` is a canonical OpIdKey; `replicaId` equals the replica part of `id`;
- * `type` is 'insert' or 'delete'; `lamport` is a non-negative integer; an insert has
- * no `target` and any `anchor` is a valid OpIdKey; a delete has a valid `target` and
- * no `anchor`; `epoch`, if present, is a non-negative integer.
+ * `type` is 'insert' or 'delete'; `lamport` is a safe integer in [0, MAX_LAMPORT]; an insert
+ * has no `target` and any `anchor` is a valid OpIdKey; a delete has a valid `target` and
+ * no `anchor`; `epoch`, if present, is a non-negative safe integer.
  *
  * @param value - Candidate operation
  * @throws TypeError describing the first problem found
@@ -352,10 +362,13 @@ export function assertValidOperation(value: unknown): asserts value is Operation
   if (o.type !== 'insert' && o.type !== 'delete') {
     throw new TypeError('assertValidOperation: "type" must be "insert" or "delete"');
   }
-  if (typeof o.lamport !== 'number' || !Number.isInteger(o.lamport) || o.lamport < 0) {
-    throw new TypeError('assertValidOperation: "lamport" must be a non-negative integer');
+  // isSafeInteger is redundant with the range check below (every integer above 2^53 - 1 is also
+  // above MAX_LAMPORT); it is kept deliberately so the validity rule never depends on that bound.
+  if (typeof o.lamport !== 'number' || !Number.isSafeInteger(o.lamport)
+      || o.lamport < 0 || o.lamport > MAX_LAMPORT) {
+    throw new TypeError('assertValidOperation: "lamport" must be an integer in [0, MAX_LAMPORT]');
   }
-  if (o.epoch !== undefined && (typeof o.epoch !== 'number' || !Number.isInteger(o.epoch) || o.epoch < 0)) {
+  if (o.epoch !== undefined && (typeof o.epoch !== 'number' || !Number.isSafeInteger(o.epoch) || o.epoch < 0)) {
     throw new TypeError('assertValidOperation: "epoch" must be a non-negative integer');
   }
   if (o.type === 'insert') {

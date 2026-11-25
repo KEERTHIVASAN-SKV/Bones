@@ -37,6 +37,7 @@ export {
   serializeOp,
   deserializeOp,
   assertValidOperation,
+  MAX_LAMPORT,
   buildOpIndex,
   estimatePayloadSize,
 } from './utils.js';

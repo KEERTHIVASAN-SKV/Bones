@@ -14,7 +14,7 @@
  */
 
 import type { Element, OpIdKey, Operation, OperationBuffer, VersionVector } from './types.js';
-import { assertValidOperation, isValidReplicaId, parseOpId } from './utils.js';
+import { assertValidOperation, isValidReplicaId, MAX_LAMPORT, parseOpId } from './utils.js';
 import { advanceContiguous } from './vv.js';
 import { bufferOp, createOperationBuffer, takeReadyFromBuffer } from './buffer.js';
 import { appendOp, createOpLog, getAllOps } from './oplog.js';
@@ -99,6 +99,7 @@ export class CRDT<T = unknown> {
     if (anchorId !== undefined && !this.rga.elements.has(anchorId)) {
       throw new RangeError(`insert: unknown anchor ${anchorId}`);
     }
+    this.assertClockHasRoom();
     const { operation } = insert<T>({
       replicaId: this.replicaId,
       anchor: anchorId,
@@ -123,6 +124,7 @@ export class CRDT<T = unknown> {
     if (!this.rga.elements.has(elementId)) {
       throw new RangeError(`delete: unknown element ${elementId}`);
     }
+    this.assertClockHasRoom();
     const { operation } = delete_({
       replicaId: this.replicaId,
       target: elementId,
@@ -132,6 +134,17 @@ export class CRDT<T = unknown> {
     }) as { operation: Operation<T> };
     this.applyLocal(operation);
     return operation;
+  }
+
+  /**
+   * A new local operation gets lamport `clock + 1`, which must stay within MAX_LAMPORT (other
+   * replicas reject anything larger). Called before an operation is created, so a refusal
+   * changes nothing and consumes no sequence number.
+   */
+  private assertClockHasRoom(): void {
+    if (this.lamportClock >= MAX_LAMPORT) {
+      throw new RangeError('CRDT: Lamport clock exhausted (reached MAX_LAMPORT); no more local operations');
+    }
   }
 
   private applyLocal(operation: Operation<T>): void {

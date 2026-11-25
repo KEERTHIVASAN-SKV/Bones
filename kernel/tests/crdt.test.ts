@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { CRDT } from '../src/crdt.js';
-import { assertValidOperation, createOpId, deserializeOp, serializeOp } from '../src/utils.js';
+import { assertValidOperation, createOpId, deserializeOp, MAX_LAMPORT, serializeOp } from '../src/utils.js';
 import type { OpIdKey, Operation } from '../src/types.js';
 
 const values = (c: CRDT<string>): string => c.getSequence().map((e) => e.value).join('');
@@ -363,6 +363,61 @@ describe('Lamport clock absorption (what makes the RGA ordering correct)', () =>
     for (const op of ops) r2.applyOp(op);
     const mine = r2.insert(undefined, 'head');
     for (const op of ops) expect(mine.lamport).toBeGreaterThan(op.lamport);
+  });
+});
+
+describe('Lamport limit (F1)', () => {
+  const forged = (lamport: number): Operation<string> => ({
+    id: createOpId('r9', 1),
+    type: 'insert',
+    value: 'x',
+    lamport,
+    replicaId: 'r9',
+  });
+  const state = (c: CRDT<string>): string =>
+    JSON.stringify({ vv: vvOf(c), clock: c.getLamportClock(), pending: c.getPendingCount(), ops: c.getOps().length, seq: values(c) });
+
+  it('rejects forged Lamport values with a TypeError and leaves the replica untouched', () => {
+    for (const lamport of [2 ** 53, 1e300, MAX_LAMPORT + 1]) {
+      const c = new CRDT<string>('r1');
+      c.insert(undefined, 'A');
+      const before = state(c);
+      expect(() => c.applyOp(forged(lamport))).toThrow(TypeError);
+      expect(state(c)).toBe(before);
+      const next = c.insert(undefined, 'B');
+      expect(next.lamport).toBe(2); // the clock was not poisoned
+    }
+  });
+
+  it('accepts an operation at exactly MAX_LAMPORT, then refuses to create more local operations', () => {
+    const c = new CRDT<string>('r1');
+    const a = c.insert(undefined, 'A');
+    expect(c.applyOp(forged(MAX_LAMPORT)).status).toBe('applied');
+    expect(c.getLamportClock()).toBe(MAX_LAMPORT);
+
+    const before = state(c);
+    expect(() => c.insert(a.id, 'B')).toThrow(RangeError);
+    expect(() => c.insert(a.id, 'B')).toThrow(/exhausted/);
+    expect(() => c.delete(a.id)).toThrow(RangeError);
+    expect(state(c)).toBe(before); // nothing changed, no sequence number consumed
+    expect(c.getVV().get('r1')).toBe(1);
+  });
+
+  it('one below the limit still works, and the new op is strictly newer than everything applied', () => {
+    const c = new CRDT<string>('r1');
+    c.applyOp(forged(MAX_LAMPORT - 1));
+    const mine = c.insert(undefined, 'last');
+    expect(mine.lamport).toBe(MAX_LAMPORT);
+    expect(() => assertValidOperation(mine)).not.toThrow();
+    expect(() => c.insert(undefined, 'one too many')).toThrow(RangeError);
+  });
+
+  it('a local insert after a normal remote op has a strictly larger lamport', () => {
+    const remote = new CRDT<string>('r2');
+    const op = remote.insert(undefined, 'R');
+    const c = new CRDT<string>('r1');
+    c.applyOp(op);
+    expect(c.insert(undefined, 'L').lamport).toBeGreaterThan(op.lamport);
   });
 });
 
