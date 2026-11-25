@@ -71,6 +71,23 @@ It is **not** a new CRDT algorithm, **not** production-ready, **not** a replacem
 
 Algorithm numbering follows `.kiro/specs/crdt-kernel/design.md`: 1 insert (RGA tree), 2 delete, 3 apply remote operation (fencing, duplicates, dependency buffering), 4 contiguous version-vector update, 5 stable frontier, 6 Stage 1 GC, 7 snapshot creation, 8 snapshot rejoin.
 
+## Kiro hooks, and what they do not cover
+
+Four hooks live in `.kiro/hooks/`:
+
+| Hook | Trigger | Does |
+|------|---------|------|
+| `kernel-purity-guard` | File Save, on `kernel/src/**/*.ts` | runs `scripts/check-purity.mjs` |
+| `kernel-quality-gate` | Agent Stop | runs `scripts/quality-gate.mjs --hook` (purity, typecheck, lint, tests) |
+| `submission-check` | Session Start | runs `scripts/check-submission.mjs` |
+| `task-done-bookkeeping` | Post Task Execution | asks the agent to run the gate, tick `tasks.md` only when acceptance criteria are met by passing tests, update `STATUS.md`, and commit |
+
+Limits, stated plainly:
+
+- Per the Kiro documentation, the file-event triggers (File Create, File Save, File Delete) fire when **the agent** changes files. The purity guard therefore protects the agent's edits only; it does not see edits you make by hand in the editor.
+- That gap is covered by CI (`.github/workflows/ci.yml`), which runs the same quality gate and the submission check on every push and pull request.
+- The hooks have not been exercised in a long unattended agent run. Treat them as guard rails, not as proof of correctness.
+
 ## Planned public API (not implemented yet)
 
 ```typescript
