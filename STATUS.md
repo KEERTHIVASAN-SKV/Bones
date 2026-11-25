@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 228 tests pass; line coverage of `kernel/src` only is 98.37% (`crdt.ts` 97.05%, `rga.ts` 98.63%, `utils.ts` 97.79%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+Last verified run: typecheck, build, lint and purity clean; 230 tests pass; line coverage of `kernel/src` only is 98.37% (`crdt.ts` 97.05%, `rga.ts` 98.63%, `utils.ts` 97.79%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
