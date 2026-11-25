@@ -45,7 +45,13 @@ const values = (rga: RGAState<string>): string => getSequence(rga).map((e) => e.
 
 describe('delete_ (local op creation)', () => {
   it('creates a delete op with a string Op ID, target, and lamport = clock + 1', () => {
-    const { operation, newLamport } = delete_('site.0', createOpId('r1', 4), 2, 7, 9);
+    const { operation, newLamport } = delete_({
+      replicaId: 'site.0',
+      target: createOpId('r1', 4),
+      clock: 9,
+      seq: 2,
+      epoch: 7,
+    });
     expect(operation).toEqual({
       id: 'site.0:3',
       type: 'delete',
@@ -55,6 +61,15 @@ describe('delete_ (local op creation)', () => {
       epoch: 7,
     });
     expect(newLamport).toBe(10);
+  });
+
+  it('takes the same named numeric fields as insert, in any key order', () => {
+    const target = createOpId('r1', 4);
+    const a = delete_({ replicaId: 'r', target, clock: 10, seq: 3, epoch: 1 });
+    const b = delete_({ epoch: 1, seq: 3, clock: 10, target, replicaId: 'r' });
+    expect(a).toEqual(b);
+    expect(a.operation.id).toBe('r:4');
+    expect(a.operation.lamport).toBe(11);
   });
 });
 

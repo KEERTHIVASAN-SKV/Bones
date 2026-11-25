@@ -31,7 +31,14 @@ function render(ops: Operation<string>[]): string {
 
 describe('insert (local op creation)', () => {
   it('creates an insert op with a string Op ID, anchor, and lamport = clock + 1', () => {
-    const { operation, newLamport } = insert('site.0', undefined, 'x', 4, 2, 7);
+    const { operation, newLamport } = insert({
+      replicaId: 'site.0',
+      anchor: undefined,
+      value: 'x',
+      clock: 4,
+      seq: 2,
+      epoch: 7,
+    });
     expect(operation).toEqual({
       id: 'site.0:3',
       type: 'insert',
@@ -42,6 +49,15 @@ describe('insert (local op creation)', () => {
       epoch: 7,
     });
     expect(newLamport).toBe(5);
+  });
+
+  it('takes named fields, so the order of the numeric fields cannot be swapped by mistake', () => {
+    const a = insert({ replicaId: 'r', anchor: undefined, value: 'x', clock: 10, seq: 3, epoch: 1 });
+    const b = insert({ epoch: 1, seq: 3, clock: 10, value: 'x', anchor: undefined, replicaId: 'r' });
+    expect(a).toEqual(b);
+    expect(a.operation.id).toBe('r:4'); // seq 3 already issued -> next is 4
+    expect(a.operation.lamport).toBe(11); // clock 10 -> 11
+    expect(a.operation.epoch).toBe(1);
   });
 });
 

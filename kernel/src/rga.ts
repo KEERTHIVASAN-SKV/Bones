@@ -77,31 +77,35 @@ function replicaIdOf(id: OpIdKey): string {
  * Create a local insert operation (design.md Algorithm 1, "Local operation creation").
  * Pure: it does not touch any RGA state; the caller applies the returned operation.
  *
- * @param replicaId - Author replica ID
- * @param anchor - Element to insert after; undefined = HEAD
- * @param value - Payload
- * @param localClock - Current Lamport clock of this replica
- * @param currentSeq - Highest sequence number this replica has issued so far
- * @param currentEpoch - Current membership epoch (diagnostic only)
+ * Named fields (one options object) instead of positional numbers: `clock`, `seq` and
+ * `epoch` are all plain numbers, and swapping them positionally compiles but silently
+ * produces wrong Op IDs and Lamport values.
+ *
+ * @param p.replicaId - Author replica ID
+ * @param p.anchor - Element to insert after; undefined = HEAD
+ * @param p.value - Payload
+ * @param p.clock - Current Lamport clock of this replica; the op's lamport is `clock + 1`
+ * @param p.seq - Highest sequence number this replica has ALREADY issued; the op's seq is `seq + 1`
+ * @param p.epoch - Current membership epoch (diagnostic only, never used for fencing)
  * @returns The operation and the new Lamport clock value
  */
-export function insert<T>(
-  replicaId: string,
-  anchor: OpIdKey | undefined,
-  value: T,
-  localClock: number,
-  currentSeq: number,
-  currentEpoch: number
-): { operation: Operation<T>; newLamport: number } {
-  const newLamport = localClock + 1;
+export function insert<T>(p: {
+  replicaId: string;
+  anchor: OpIdKey | undefined;
+  value: T;
+  clock: number;
+  seq: number;
+  epoch: number;
+}): { operation: Operation<T>; newLamport: number } {
+  const newLamport = p.clock + 1;
   const operation: Operation<T> = {
-    id: createOpId(replicaId, currentSeq + 1),
+    id: createOpId(p.replicaId, p.seq + 1),
     type: 'insert',
-    anchor,
-    value,
+    anchor: p.anchor,
+    value: p.value,
     lamport: newLamport,
-    replicaId,
-    epoch: currentEpoch,
+    replicaId: p.replicaId,
+    epoch: p.epoch,
   };
   return { operation, newLamport };
 }
@@ -157,28 +161,30 @@ export function applyInsert<T>(rga: RGAState<T>, op: Operation<T>): boolean {
 /**
  * Create a local delete operation (design.md Algorithm 2). Pure: the caller applies it.
  *
- * @param replicaId - Author replica ID
- * @param target - Element to delete
- * @param currentSeq - Highest sequence number this replica has issued so far
- * @param currentEpoch - Current membership epoch (diagnostic only)
- * @param localClock - Current Lamport clock of this replica
+ * Same named-field convention as {@link insert}.
+ *
+ * @param p.replicaId - Author replica ID
+ * @param p.target - Element to delete
+ * @param p.clock - Current Lamport clock of this replica; the op's lamport is `clock + 1`
+ * @param p.seq - Highest sequence number this replica has ALREADY issued; the op's seq is `seq + 1`
+ * @param p.epoch - Current membership epoch (diagnostic only, never used for fencing)
  * @returns The operation and the new Lamport clock value
  */
-export function delete_(
-  replicaId: string,
-  target: OpIdKey,
-  currentSeq: number,
-  currentEpoch: number,
-  localClock: number
-): { operation: Operation; newLamport: number } {
-  const newLamport = localClock + 1;
+export function delete_(p: {
+  replicaId: string;
+  target: OpIdKey;
+  clock: number;
+  seq: number;
+  epoch: number;
+}): { operation: Operation; newLamport: number } {
+  const newLamport = p.clock + 1;
   const operation: Operation = {
-    id: createOpId(replicaId, currentSeq + 1),
+    id: createOpId(p.replicaId, p.seq + 1),
     type: 'delete',
-    target,
+    target: p.target,
     lamport: newLamport,
-    replicaId,
-    epoch: currentEpoch,
+    replicaId: p.replicaId,
+    epoch: p.epoch,
   };
   return { operation, newLamport };
 }

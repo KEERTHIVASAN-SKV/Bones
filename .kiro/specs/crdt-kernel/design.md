@@ -374,25 +374,27 @@ function compareSiblingKeys<T>(a: Element<T>, b: Element<T>): number {
 
 **Local operation creation:**
 
+One options object, not positional numbers: `clock`, `seq` and `epoch` are all plain numbers, and swapping them positionally compiles but silently produces wrong Op IDs and Lamport values.
+
 ```typescript
-function insert<T>(
-  replicaId: string,
-  anchor: OpIdKey | undefined,  // undefined = HEAD
-  value: T,
-  localClock: number,           // current Lamport clock of this replica
-  currentSeq: number,           // current sequence of this replica
-  currentEpoch: number
-): { operation: Operation<T>; newLamport: number } {
-  const newSeq = currentSeq + 1;
-  const newLamport = localClock + 1;
+function insert<T>(p: {
+  replicaId: string;
+  anchor: OpIdKey | undefined;  // undefined = HEAD
+  value: T;
+  clock: number;                // current Lamport clock of this replica; op.lamport = clock + 1
+  seq: number;                  // highest seq this replica has ALREADY issued; op seq = seq + 1
+  epoch: number;                // diagnostic only
+}): { operation: Operation<T>; newLamport: number } {
+  const newSeq = p.seq + 1;
+  const newLamport = p.clock + 1;
   const operation: Operation<T> = {
-    id: createOpId(replicaId, newSeq),
+    id: createOpId(p.replicaId, newSeq),
     type: 'insert',
-    anchor,
-    value,
+    anchor: p.anchor,
+    value: p.value,
     lamport: newLamport,
-    replicaId,
-    epoch: currentEpoch,        // diagnostic only
+    replicaId: p.replicaId,
+    epoch: p.epoch,
   };
   return { operation, newLamport };
 }
@@ -458,26 +460,26 @@ function traverse<T>(rga: RGAState<T>): Element<T>[] {
 
 ### Algorithm 2: Delete Operation
 
-**Input**: `replicaId`, `target` (element Op ID), `currentSeq`, `currentEpoch`, `localClock`
+**Input**: one options object `{ replicaId, target (element Op ID), clock, seq, epoch }`, with the same meaning of `clock` / `seq` / `epoch` as in Algorithm 1
 **Output**: `Operation` with type 'delete'
 
 ```typescript
-function delete_(
-  replicaId: string,
-  target: OpIdKey,
-  currentSeq: number,
-  currentEpoch: number,
-  localClock: number
-): { operation: Operation; newLamport: number } {
-  const newSeq = currentSeq + 1;
-  const newLamport = localClock + 1;
+function delete_(p: {
+  replicaId: string;
+  target: OpIdKey;
+  clock: number;                // current Lamport clock; op.lamport = clock + 1
+  seq: number;                  // highest seq already issued; op seq = seq + 1
+  epoch: number;                // diagnostic only
+}): { operation: Operation; newLamport: number } {
+  const newSeq = p.seq + 1;
+  const newLamport = p.clock + 1;
   const operation: Operation = {
-    id: createOpId(replicaId, newSeq),
+    id: createOpId(p.replicaId, newSeq),
     type: 'delete',
-    target,
+    target: p.target,
     lamport: newLamport,
-    replicaId,
-    epoch: currentEpoch,
+    replicaId: p.replicaId,
+    epoch: p.epoch,
   };
   return { operation, newLamport };
 }

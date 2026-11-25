@@ -146,7 +146,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: insert at various anchors; verify sibling order is newest-first; insert in the middle lands right after its anchor; nested concurrent inserts (depth ≥ 3) keep every subtree contiguous
 
 - [x] 7. **RGA Delete Logic and Tombstones** (KER-007)
-  - Implement `delete_(elementId, replicaId)` function: create delete operation (`id`, `target`, `lamport`)
+  - Implement `delete_({ replicaId, target, clock, seq, epoch })` function (one options object, same shape as `insert`): create delete operation (`id`, `target`, `lamport`)
   - Implement `applyDelete(state, op)` function: mark element as deleted (tombstone); returns whether the element changed (false for a no-op)
   - ALWAYS record the delete op in `deleteOps[target]`, even when it is a no-op (Stage 1 GC reclaims when ANY delete op of the element is stable)
   - Track deletion with `deletedAt` = the SMALLEST delete Op ID applied so far (code-unit order), so concurrent deletes give identical state on every replica
