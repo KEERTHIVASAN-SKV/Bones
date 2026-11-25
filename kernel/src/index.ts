@@ -70,5 +70,6 @@ export {
 } from './rga.js';
 export type { RGAState, ParentKey } from './rga.js';
 
-// Main CRDT class (to be implemented in later tasks)
-// export { CRDT } from './crdt.js';
+// The CRDT replica (local operations, applyOp pipeline, queries, events)
+export { CRDT } from './crdt.js';
+export type { ApplyResult } from './crdt.js';

@@ -33,6 +33,7 @@ import {
   purgeFencedBuffered,
   refreshMissing,
   assertValidOperation,
+  CRDT,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -69,6 +70,20 @@ describe('public API (index.ts) exposes the RGA', () => {
     ]) {
       expect(typeof fn).toBe('function');
     }
+  });
+
+  it('exports the CRDT class, and two replicas converge through the public entry point', () => {
+    expect(typeof CRDT).toBe('function');
+    const a = new CRDT<string>('site1.0');
+    const b = new CRDT<string>('site2.0');
+    const c = a.insert(undefined, 'C');
+    const t = a.insert(c.id, 'T');
+    const x = b.applyOp(c).status === 'applied' ? b.insert(c.id, 'X') : c; // concurrent with T
+    b.applyOp(t);
+    a.applyOp(x);
+    const text = (r: CRDT<string>): string => r.getSequence().map((e) => e.value).join('');
+    expect(text(a)).toBe(text(b));
+    expect(text(a)).toHaveLength(3);
   });
 
   it('runs the CAT/A/X example through the public entry point', () => {
