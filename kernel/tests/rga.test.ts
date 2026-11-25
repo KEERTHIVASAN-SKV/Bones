@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { createOpId } from '../src/utils.js';
 import type { OpIdKey, Operation } from '../src/types.js';
-import { createRGA, applyInsert, insert, traverse } from '../src/rga.js';
+import { createRGA, applyInsert, compareSiblingKeys, insert, traverse } from '../src/rga.js';
 
 /** Build an insert op by hand (replica, its seq, anchor, lamport, value). */
 function ins(
@@ -100,6 +100,32 @@ describe('applyInsert and traversal', () => {
     const upper = ins('B', 1, root.id, 2, 'U');
     const lower = ins('a', 2, root.id, 2, 'l');
     expect(render([root, upper, lower])).toBe('Rl' + 'U');
+  });
+
+  it('orders by replicaId, not by the whole Op ID string, when one replicaId is a prefix of another (E3)', () => {
+    // "site1" < "site1.2" by code unit (a prefix is smaller), so site1.2 is the higher replicaId
+    // and must come first. Comparing whole Op IDs instead would give the opposite order,
+    // because '.' (46) sorts before ':' (58): "site1.2:1" < "site1:1".
+    const root = ins('r0', 1, undefined, 1, 'R');
+    const short = ins('site1', 1, root.id, 2, 'p');
+    const long = ins('site1.2', 1, root.id, 2, 'q');
+    expect(short.id > long.id).toBe(true); // the trap: whole-ID order is the reverse of replicaId order
+    expect(render([root, short, long])).toBe('Rqp');
+    expect(render([root, long, short])).toBe('Rqp');
+  });
+
+  it('compareSiblingKeys: lamport first, then replicaId by code unit (E3)', () => {
+    const rga = createRGA<string>();
+    const root = ins('r0', 1, undefined, 1, 'R');
+    const short = ins('site1', 1, root.id, 2, 'p');
+    const long = ins('site1.2', 1, root.id, 2, 'q');
+    const later = ins('a', 1, root.id, 3, 'z');
+    for (const op of [root, short, long, later]) applyInsert(rga, op);
+    const el = (id: OpIdKey) => rga.elements.get(id)!;
+    expect(compareSiblingKeys(el(long.id), el(short.id))).toBeGreaterThan(0); // same lamport: higher replicaId is newer
+    expect(compareSiblingKeys(el(short.id), el(long.id))).toBeLessThan(0);
+    expect(compareSiblingKeys(el(later.id), el(long.id))).toBeGreaterThan(0); // higher lamport wins over replicaId
+    expect(compareSiblingKeys(el(short.id), el(short.id))).toBe(0);
   });
 
   it('keeps a subtree contiguous when a newer concurrent sibling arrives (A <- B <- C, D sibling of B)', () => {
