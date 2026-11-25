@@ -44,5 +44,13 @@ export {
 export { EventEmitter } from './events.js';
 export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 
+// Replicated Growable Array (anchor tree)
+export {
+  createRGA, applyInsert, applyDelete, insert, delete_,
+  getSequence, isElementDeleted, markPayloadReclaimed, traverse,
+  compareSiblingKeys,
+} from './rga.js';
+export type { RGAState, ParentKey } from './rga.js';
+
 // Main CRDT class (to be implemented in later tasks)
 // export { CRDT } from './crdt.js';
