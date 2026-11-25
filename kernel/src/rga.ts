@@ -265,6 +265,19 @@ export function getSequence<T>(rga: RGAState<T>): Element<T>[] {
 }
 
 /**
+ * Every element in structural order, INCLUDING tombstones (deleted elements, with their
+ * `deletedAt`, `anchor` and `payloadReclaimed` flag). The Graveyard panel and snapshots need
+ * this; `getSequence` only returns live elements.
+ * Returns copies, so callers cannot corrupt the RGA by mutating them.
+ *
+ * @param rga - RGA state
+ * @returns Copies of all elements in sequence order
+ */
+export function getAllElements<T>(rga: RGAState<T>): Element<T>[] {
+  return traverse(rga).map((element) => ({ ...element }));
+}
+
+/**
  * Whether an element is a tombstone.
  *
  * @param rga - RGA state

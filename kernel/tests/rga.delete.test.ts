@@ -10,6 +10,7 @@ import {
   applyInsert,
   applyDelete,
   delete_,
+  getAllElements,
   getSequence,
   isElementDeleted,
   markPayloadReclaimed,
@@ -191,6 +192,41 @@ describe('getSequence and isElementDeleted (KER-008)', () => {
     expect(seq).toHaveLength(50_000);
     expect(seq[0].value).toBe(1);
     expect(seq[49_999].value).toBe(50_000);
+  });
+});
+
+describe('getAllElements (F4): every element, tombstones included', () => {
+  it('returns all elements in structural order, including deleted ones, with their anchors', () => {
+    const { rga, c, a, t } = cat();
+    applyDelete(rga, del('r2', 1, a, 4));
+    expect(getSequence(rga).map((e) => e.value).join('')).toBe('CT');
+    const all = getAllElements(rga);
+    expect(all.map((e) => e.id)).toEqual([c, a, t]);
+    expect(all.map((e) => e.deleted)).toEqual([false, true, false]);
+    expect(all.map((e) => e.anchor)).toEqual([undefined, c, a]);
+    expect(all[1].deletedAt).toBe(createOpId('r2', 1));
+    expect(all[1].payloadReclaimed).toBe(false);
+  });
+
+  it('shows a reclaimed tombstone with no value and payloadReclaimed set', () => {
+    const { rga, a } = cat();
+    applyDelete(rga, del('r2', 1, a, 4));
+    markPayloadReclaimed(rga, a);
+    const tomb = getAllElements(rga).find((e) => e.id === a)!;
+    expect(tomb).toMatchObject({ deleted: true, payloadReclaimed: true });
+    expect(tomb.value).toBeUndefined();
+  });
+
+  it('is empty for an empty RGA, and returns copies that cannot corrupt the RGA', () => {
+    expect(getAllElements(createRGA<string>())).toEqual([]);
+    const { rga, c } = cat();
+    const all = getAllElements(rga);
+    all[0].value = 'HACKED';
+    all[0].deleted = true;
+    all.pop();
+    expect(rga.elements.get(c)!.value).toBe('C');
+    expect(getAllElements(rga)).toHaveLength(3);
+    expect(values(rga)).toBe('CAT');
   });
 });
 

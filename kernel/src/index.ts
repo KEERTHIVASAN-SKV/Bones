@@ -66,7 +66,7 @@ export type { OpLog } from './oplog.js';
 // Replicated Growable Array (anchor tree)
 export {
   createRGA, cloneRGA, applyInsert, applyDelete, insert, delete_,
-  getSequence, isElementDeleted, markPayloadReclaimed, traverse,
+  getSequence, getAllElements, isElementDeleted, markPayloadReclaimed, traverse,
   compareSiblingKeys,
 } from './rga.js';
 export type { RGAState, ParentKey } from './rga.js';

@@ -496,6 +496,66 @@ describe('opsSince (catch-up for a peer with a given version vector)', () => {
   });
 });
 
+describe('getAllElements (F4): the Graveyard panel can read tombstones', () => {
+  it('after a delete the element is absent from getSequence() but present in getAllElements() with deleted: true', () => {
+    const c = new CRDT<string>('r1');
+    const a = c.insert(undefined, 'A');
+    const b = c.insert(a.id, 'B');
+    const d = c.delete(a.id);
+
+    expect(c.getSequence().map((e) => e.id)).toEqual([b.id]);
+    const all = c.getAllElements();
+    expect(all.map((e) => e.id)).toEqual([a.id, b.id]); // structural order: A, then its child B
+    const tomb = all.find((e) => e.id === a.id)!;
+    expect(tomb).toMatchObject({ id: a.id, deleted: true, deletedAt: d.id, payloadReclaimed: false, value: 'A' });
+    expect(tomb.anchor).toBeUndefined();
+    expect(all.find((e) => e.id === b.id)).toMatchObject({ deleted: false, anchor: a.id });
+  });
+
+  it('is empty for a new replica and grows with every insert, never shrinks on delete', () => {
+    const c = new CRDT<string>('r1');
+    expect(c.getAllElements()).toEqual([]);
+    const a = c.insert(undefined, 'A');
+    c.insert(a.id, 'B');
+    c.delete(a.id);
+    expect(c.getAllElements()).toHaveLength(2);
+  });
+
+  it('includes tombstones that arrived from other replicas', () => {
+    const r1 = new CRDT<string>('r1');
+    const a = r1.insert(undefined, 'A');
+    const del = r1.delete(a.id);
+    const r2 = new CRDT<string>('r2');
+    r2.applyOp(a);
+    r2.applyOp(del);
+    expect(r2.getSequence()).toEqual([]);
+    expect(r2.getAllElements().map((e) => [e.id, e.deleted])).toEqual([[a.id, true]]);
+  });
+
+  it('returns copies: mutating them changes nothing', () => {
+    const c = new CRDT<string>('r1');
+    const a = c.insert(undefined, 'A');
+    const all = c.getAllElements();
+    all[0].deleted = true;
+    all[0].value = 'HACKED';
+    all.pop();
+    expect(c.isElementDeleted(a.id)).toBe(false);
+    expect(values(c)).toBe('A');
+    expect(c.getAllElements()).toHaveLength(1);
+  });
+
+  it('does not emit events and does not change the replica', () => {
+    const c = new CRDT<string>('r1');
+    c.insert(undefined, 'A');
+    let n = 0;
+    c.on('sequenceChanged', () => n++);
+    const before = JSON.stringify({ vv: vvOf(c), ops: c.getOps().length, clock: c.getLamportClock() });
+    c.getAllElements();
+    expect(n).toBe(0);
+    expect(JSON.stringify({ vv: vvOf(c), ops: c.getOps().length, clock: c.getLamportClock() })).toBe(before);
+  });
+});
+
 describe('queries return copies', () => {
   it('getSequence elements cannot be used to corrupt the CRDT', () => {
     const c = new CRDT<string>('r1');

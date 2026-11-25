@@ -26,6 +26,7 @@ import {
   applyInsert,
   createRGA,
   delete_,
+  getAllElements,
   getSequence,
   insert,
   isElementDeleted,
@@ -242,6 +243,16 @@ export class CRDT<T = unknown> {
    */
   getSequence(): Element<T>[] {
     return getSequence(this.rga);
+  }
+
+  /**
+   * Every element in structural order, INCLUDING tombstones (deleted elements). Use it for the
+   * Graveyard panel; `getSequence()` returns only live elements.
+   *
+   * @returns Copies of all elements, each with `anchor`, `deleted`, `deletedAt`, `payloadReclaimed`
+   */
+  getAllElements(): Element<T>[] {
+    return getAllElements(this.rga);
   }
 
   /**
