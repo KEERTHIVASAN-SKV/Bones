@@ -18,6 +18,7 @@ import {
   stableStringify,
   serializeOp,
   deserializeOp,
+  assertValidOperation,
   buildOpIndex,
   estimatePayloadSize,
 } from '../src/utils.js';
@@ -227,6 +228,59 @@ describe('Operation serialization', () => {
     expect(bad({ ...insertOp, target: 'r1:1' })).toThrow();
     expect(bad({ ...deleteOp, target: undefined })).toThrow();
     expect(bad({ ...deleteOp, anchor: 'r1:1' })).toThrow();
+  });
+});
+
+describe('assertValidOperation (for operations that never passed through deserializeOp)', () => {
+  const good = (): Record<string, unknown> => ({
+    id: 'r1:3',
+    type: 'insert',
+    anchor: 'r1:2',
+    value: 'x',
+    lamport: 3,
+    replicaId: 'r1',
+  });
+
+  it('accepts well-formed inserts and deletes', () => {
+    expect(() => assertValidOperation(good())).not.toThrow();
+    expect(() => assertValidOperation({ id: 'r2:1', type: 'delete', target: 'r1:3', lamport: 4, replicaId: 'r2' })).not.toThrow();
+    expect(() => assertValidOperation({ ...good(), anchor: undefined, epoch: 0 })).not.toThrow();
+  });
+
+  it('rejects a replicaId that does not match the replica part of the id', () => {
+    expect(() => assertValidOperation({ ...good(), replicaId: 'r2' })).toThrow(TypeError);
+    expect(() => assertValidOperation({ ...good(), replicaId: 'r' })).toThrow(TypeError); // prefix is not a match
+    expect(() => assertValidOperation({ ...good(), id: 'site1.2:3', replicaId: 'site1' })).toThrow(TypeError);
+  });
+
+  it('rejects non-objects, bad ids, bad types, bad lamports and bad epochs', () => {
+    for (const bad of [null, undefined, 42, 'op', [], { ...good(), id: 'nocolon' }, { ...good(), id: 'r1:0' },
+      { ...good(), id: 'r1:1.5' }, { ...good(), id: 5 }, { ...good(), type: 'update' }, { ...good(), lamport: -1 },
+      { ...good(), lamport: 1.5 }, { ...good(), lamport: '3' }, { ...good(), epoch: -1 }, { ...good(), epoch: 'x' }]) {
+      expect(() => assertValidOperation(bad)).toThrow(TypeError);
+    }
+  });
+
+  it('rejects an unknown type even when every other field looks like a valid delete', () => {
+    const lookslikeDelete = { id: 'r2:1', type: 'update', target: 'r1:3', lamport: 4, replicaId: 'r2' };
+    expect(() => assertValidOperation(lookslikeDelete)).toThrow(/"type" must be/);
+    const lookslikeInsert = { id: 'r2:1', type: 'upsert', value: 'x', lamport: 4, replicaId: 'r2' };
+    expect(() => assertValidOperation(lookslikeInsert)).toThrow(/"type" must be/);
+  });
+
+  it('rejects inconsistent insert/delete fields', () => {
+    expect(() => assertValidOperation({ ...good(), target: 'r1:1' })).toThrow(TypeError); // insert with a target
+    expect(() => assertValidOperation({ ...good(), anchor: 'bad' })).toThrow(TypeError);
+    const del = { id: 'r2:1', type: 'delete', target: 'r1:3', lamport: 4, replicaId: 'r2' };
+    expect(() => assertValidOperation({ ...del, anchor: 'r1:1' })).toThrow(TypeError); // delete with an anchor
+    expect(() => assertValidOperation({ ...del, target: undefined })).toThrow(TypeError);
+    expect(() => assertValidOperation({ ...del, target: 'bad' })).toThrow(TypeError);
+  });
+
+  it('deserializeOp applies the same checks (single source of truth)', () => {
+    expect(() => deserializeOp(JSON.stringify({ ...good(), replicaId: 'r2' }))).toThrow(TypeError);
+    expect(() => deserializeOp('[]')).toThrow(TypeError);
+    expect(deserializeOp(JSON.stringify(good())).id).toBe('r1:3');
   });
 });
 

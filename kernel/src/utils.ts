@@ -324,54 +324,66 @@ export function serializeOp<T>(op: Operation<T>): string {
 }
 
 /**
- * Parse and validate an operation from JSON. This is a trust boundary (operations
- * arrive from the network), so the structure is checked, not just cast.
+ * Check that a value is a well-formed Operation. Use it on any operation that did not come
+ * through `deserializeOp` (tests, in-process peers, application code): the kernel trusts
+ * `op.replicaId` for fencing, so it must really be the author named in `op.id`.
  *
  * Validated: `id` is a canonical OpIdKey; `replicaId` equals the replica part of `id`;
  * `type` is 'insert' or 'delete'; `lamport` is a non-negative integer; an insert has
  * no `target` and any `anchor` is a valid OpIdKey; a delete has a valid `target` and
  * no `anchor`; `epoch`, if present, is a non-negative integer.
  *
- * @param json - JSON produced by {@link serializeOp}
- * @returns The parsed operation
- * @throws Error if the JSON is malformed or the operation structure is invalid
+ * @param value - Candidate operation
+ * @throws TypeError describing the first problem found
  */
-export function deserializeOp<T = unknown>(json: string): Operation<T> {
-  const parsed: unknown = JSON.parse(json);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('deserializeOp: expected a JSON object');
+export function assertValidOperation(value: unknown): asserts value is Operation {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('assertValidOperation: expected an object');
   }
-  const o = parsed as Record<string, unknown>;
+  const o = value as Record<string, unknown>;
 
   if (!isOpIdKey(o.id)) {
-    throw new Error('deserializeOp: invalid or missing "id"');
+    throw new TypeError('assertValidOperation: invalid or missing "id"');
   }
   const idParts = parseOpId(o.id);
   if (typeof o.replicaId !== 'string' || idParts === null || o.replicaId !== idParts.replicaId) {
-    throw new Error('deserializeOp: "replicaId" must match the replica part of "id"');
+    throw new TypeError('assertValidOperation: "replicaId" must match the replica part of "id"');
   }
   if (o.type !== 'insert' && o.type !== 'delete') {
-    throw new Error('deserializeOp: "type" must be "insert" or "delete"');
+    throw new TypeError('assertValidOperation: "type" must be "insert" or "delete"');
   }
   if (typeof o.lamport !== 'number' || !Number.isInteger(o.lamport) || o.lamport < 0) {
-    throw new Error('deserializeOp: "lamport" must be a non-negative integer');
+    throw new TypeError('assertValidOperation: "lamport" must be a non-negative integer');
   }
   if (o.epoch !== undefined && (typeof o.epoch !== 'number' || !Number.isInteger(o.epoch) || o.epoch < 0)) {
-    throw new Error('deserializeOp: "epoch" must be a non-negative integer');
+    throw new TypeError('assertValidOperation: "epoch" must be a non-negative integer');
   }
   if (o.type === 'insert') {
-    if (o.target !== undefined) throw new Error('deserializeOp: insert must not have "target"');
+    if (o.target !== undefined) throw new TypeError('assertValidOperation: insert must not have "target"');
     if (o.anchor !== undefined && !isOpIdKey(o.anchor)) {
-      throw new Error('deserializeOp: invalid "anchor"');
+      throw new TypeError('assertValidOperation: invalid "anchor"');
     }
   } else {
-    if (o.anchor !== undefined) throw new Error('deserializeOp: delete must not have "anchor"');
-    if (!isOpIdKey(o.target)) throw new Error('deserializeOp: delete requires a valid "target"');
+    if (o.anchor !== undefined) throw new TypeError('assertValidOperation: delete must not have "anchor"');
+    if (!isOpIdKey(o.target)) throw new TypeError('assertValidOperation: delete requires a valid "target"');
   }
-
-  return parsed as Operation<T>;
 }
 
+/**
+ * Parse and validate an operation from JSON. This is a trust boundary (operations
+ * arrive from the network), so the structure is checked, not just cast.
+ * See {@link assertValidOperation} for exactly what is validated.
+ *
+ * @param json - JSON produced by {@link serializeOp}
+ * @returns The parsed operation
+ * @throws SyntaxError if the JSON is malformed
+ * @throws TypeError if the operation structure is invalid
+ */
+export function deserializeOp<T = unknown>(json: string): Operation<T> {
+  const parsed: unknown = JSON.parse(json);
+  assertValidOperation(parsed);
+  return parsed as Operation<T>;
+}
 /**
  * Build a map from element ID to its index in an element array.
  *

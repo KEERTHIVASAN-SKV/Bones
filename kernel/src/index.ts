@@ -36,6 +36,7 @@ export {
   stableStringify,
   serializeOp,
   deserializeOp,
+  assertValidOperation,
   buildOpIndex,
   estimatePayloadSize,
 } from './utils.js';
