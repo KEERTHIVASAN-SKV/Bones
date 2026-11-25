@@ -1,291 +1,158 @@
-# CRDT Kernel
+# Bones
 
-A specification-driven, causally-consistent collaborative data structure implementation using Replicated Growable Arrays (RGA) and Lamport clocks.
+A small, educational CRDT kernel: a Replicated Growable Array (RGA) with version vectors, membership and fencing, and tombstone reclamation, plus two demo apps. Built for the Kiroween 2026 hackathon (Skeleton Crew category) with spec-driven development in Kiro.
 
-## Overview
+## Status
 
-CRDT Kernel is an educational implementation of a conflict-free replicated data type (CRDT) designed for collaborative applications. It provides a foundation for building real-time collaborative editors, whiteboards, checklists, and other multi-user applications where replicas can operate independently and eventually converge.
+Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 
-**Status**: Pre-implementation (specification and design phase complete)
+| Part | State |
+|------|-------|
+| Kernel setup, types, utilities, event emitter (KER-001 to KER-005) | done |
+| Kernel RGA: insert, delete and tombstones, sequence queries, payload reclamation primitive (KER-006 to KER-010) | done, with seeded property tests |
+| Kernel op log, dependency buffering, membership and fencing, GC, snapshots, and the `CRDT` class | not started |
+| `coordinator/` | placeholder |
+| `apps/graveyard-whiteboard`, `apps/cursed-checklist` | placeholders (the two separate app folders the Skeleton Crew category requires) |
 
-**Target Completion**: December 3, 2026
+The `CRDT` class shown below is the planned public API. It does not exist yet.
 
-## Key Features
+## Run it
 
-- **Lamport Clock Ordering**: Deterministic operation ordering across replicas using `(lamport, replicaId)` tuples
-- **RGA (Replicated Growable Array)**: Supports concurrent inserts and deletes with structural integrity
-- **Causal Consistency**: Version vectors enforce causal ordering across replicas
-- **Garbage Collection**: Stage 1 payload reclamation based on stable frontiers
-- **Membership Management**: Dynamic replica join/leave with epoch-based fencing
-- **Snapshot & Rejoin**: Support for saving state and recovering new replicas
-- **Property-Based Testing**: 18 correctness properties verified with fast-check
-- **Deterministic Replay**: All operations reproducible with same seed
+Requires Node.js 20 or newer.
 
-## Design Philosophy
-
-This implementation follows the [BONES Project Specification](BONES_PROJECT_SPEC.md) with these core principles:
-
-1. **No Data Loss**: Operations are buffered indefinitely until dependencies are satisfied
-2. **Deterministic**: Same operations in same order always produce identical results (no wall-clock time)
-3. **Code-Unit Comparison**: Replica IDs compared using string comparison only (no locale-dependent functions)
-4. **Manual Eviction**: Replicas only evicted via explicit operator action (no automatic timeout-based eviction)
-5. **Structural Integrity**: Deleted elements retained as anchors; only payloads reclaimed in GC
-
-## Architecture
-
-### Core Modules
-
-| Module | Responsibility |
-|--------|-----------------|
-| **Lamport** | Local clock tracking and operation timestamps |
-| **RGA** | Insert/delete operations with concurrent ordering |
-| **VersionVector** | Causal dependency tracking and contiguity enforcement |
-| **OpLog** | Operation log storage, deduplication, and replay |
-| **Membership** | Active replica set, epochs, and eviction cutoffs |
-| **GC** | Stable frontier computation and payload reclamation |
-| **Snapshot** | State serialization and replica rejoin |
-
-### CRDT Orchestrator
-
-Central `CRDT` class coordinates all modules and provides public API:
-
-```typescript
-// Create a local replica
-const crdt = new CRDT('replica-1');
-
-// Local operations
-const op1 = crdt.insert(undefined, { text: 'Hello' });
-const op2 = crdt.insert(op1.id, { text: ' World' });
-
-// Query state
-const sequence = crdt.getSequence();  // [{ text: 'Hello' }, { text: ' World' }]
-const vv = crdt.getVV();              // Version vector
-
-// Handle remote operations
-crdt.applyOp(remoteOp);
-
-// Save and restore state
-const snapshot = crdt.snapshot();
-const crdt2 = CRDT.fromSnapshot(snapshot);
+```bash
+# from the repo root
+cd kernel
+npm ci          # install the pinned dependencies
+npm test        # run the kernel tests
+cd ..
+node scripts/quality-gate.mjs   # purity check, typecheck (src + tests), lint, tests
 ```
 
-## Testing Strategy
+Other kernel scripts (run inside `kernel/`): `npm run typecheck`, `npm run build`, `npm run lint`, `npm run coverage`.
 
-### Unit Tests (9 groups)
-- RGA operations (insert, delete, tombstones)
-- VersionVector partial order and contiguity
-- OpLog deduplication and replay
-- Membership updates and epochs
-- GC correctness and frontier computation
-- Snapshot serialization and rejoin
-- CRDT orchestrator integration
-- Event consistency
-- Edge cases and error recovery
+## Folder map
 
-### Property-Based Tests (18 properties)
-1. RGA Convergence
-2. Op ID Uniqueness and Ordering
-3. Op ID Contiguity
-4. OpLog Deterministic Replay
-5. VV Partial Order Consistency
-6. Contiguous Prefix Rule
-7. Missing Operation Recovery (no deadlock)
-8. Duplicate Suppression Idempotence
-9. Deterministic Network Reproducibility
-10. Membership Epoch Monotonicity
-11. Stale-Epoch Fencing
-12. Stable Frontier Monotonicity
-13. Causally Stable Operation Identification
-14. Stage 1 GC Correctness
-15. Snapshot Fidelity
-16. Deterministic Operation Serialization
-17. Event Callback Consistency
-18. API Method Consistency
+| Path | What it is |
+|------|------------|
+| `kernel/` | The pure TypeScript CRDT kernel (no DOM, network, storage, clocks or randomness in `kernel/src`) |
+| `apps/graveyard-whiteboard/` | Collaborative drawing app (placeholder) |
+| `apps/cursed-checklist/` | Collaborative to-do app (placeholder) |
+| `coordinator/` | Small Node.js coordinator service (placeholder) |
+| `scripts/` | Guard scripts used by the hooks and by hand: `check-purity.mjs`, `check-submission.mjs`, `quality-gate.mjs` |
+| `.kiro/specs/crdt-kernel/` | Requirements, design and task list the code is built from |
+| `.kiro/steering/` | Project context and technical conventions for the Kiro agent |
+| `.kiro/hooks/` | Kiro agent hooks |
+| `STATUS.md` | The single current-status document |
+| `docs/archive/` | Older status documents, kept as history only |
+| `BONES_PROJECT_SPEC.md` | The full project brief |
 
-### Integration Tests (5 scenarios)
-- 2-replica convergence with reordered messages
-- 3+ replica convergence
-- Snapshot and rejoin workflow
-- Membership changes and eviction
-- End-to-end combined scenario
+## What this is, and what it is not
+
+Allowed claims, from the project spec (section 3.4):
+
+- A small, educational CRDT kernel.
+- The RGA is tested with seeded property-based tests (fast-check). More properties are specified and still to be written.
+- It aims to make tombstone reclamation, membership and fencing visible (the Graveyard panel in the apps).
+- It uses a small coordinator for membership and compaction authorization; edits are peer-to-peer. (Design; the coordinator is not built yet.)
+- Evicted peers must rejoin from a snapshot. (Design; snapshots are not built yet.)
+
+It is **not** a new CRDT algorithm, **not** production-ready, **not** a replacement for Yjs, Automerge or Loro, **not** fully decentralized (membership needs the coordinator), and **not** formally proven correct.
+
+## Design in brief
+
+- **Op IDs** are strings `` `${replicaId}:${seq}` `` (type `OpIdKey`), never objects.
+- **The RGA is an anchor tree.** Each element is a child of the element it was inserted after (or of HEAD). The sequence is an iterative depth-first traversal. Siblings are ordered **newest first** by `(lamport, replicaId)`, compared by code unit (never `localeCompare`). A local insert therefore lands immediately after its anchor, and an element's descendants always stay contiguous.
+- **Version vectors** track the highest *contiguous* applied sequence per replica; buffered operations never advance them. An operation that changes nothing (for example a second concurrent delete of the same element) still counts as applied.
+- **Fencing** of edit operations is by author and eviction cutoff, never by the operation's `epoch` field. Control messages are fenced separately by epoch and membership.
+- **Eviction** is manual only (an operator action), in two phases: publish the new membership with a per-author cutoff, then complete once every surviving replica has confirmed it holds the evicted replica's operations up to that cutoff.
+- **Garbage collection (Stage 1)** reclaims the payload of a deleted element once any delete of it is causally stable, and keeps the structural node so it still works as an anchor.
+- **Kernel purity:** no `Date.now()`, `Math.random()`, DOM, network or storage in `kernel/src`. `scripts/check-purity.mjs` enforces it.
+
+Algorithm numbering follows `.kiro/specs/crdt-kernel/design.md`: 1 insert (RGA tree), 2 delete, 3 apply remote operation (fencing, duplicates, dependency buffering), 4 contiguous version-vector update, 5 stable frontier, 6 Stage 1 GC, 7 snapshot creation, 8 snapshot rejoin.
+
+## Planned public API (not implemented yet)
+
+```typescript
+const crdt = new CRDT('site1.0');
+
+const a = crdt.insert(undefined, 'Hello');   // insert at the start
+const b = crdt.insert(a.id, ' World');       // insert after element a
+
+crdt.getSequence();                          // visible Element[] in order
+crdt.getVV();                                // version vector
+
+crdt.applyOp(remoteOp);                      // apply an operation from another replica
+
+const snapshot = crdt.snapshot();
+const rejoined = CRDT.fromSnapshot(snapshot, 'site1.1'); // a returning replica uses a NEW replica ID
+```
+
+## Core types
+
+From `kernel/src/types.ts`:
+
+```typescript
+type OpIdKey = `${string}:${number}`;
+
+interface Operation<T> {
+  id: OpIdKey;
+  type: 'insert' | 'delete';
+  anchor?: OpIdKey;        // insert: position after this element (undefined = HEAD)
+  target?: OpIdKey;        // delete: which element
+  value?: T;               // insert only
+  lamport: number;
+  replicaId: string;
+  epoch?: number;          // diagnostic only, never used for fencing
+}
+
+interface Element<T> {
+  id: OpIdKey;
+  anchor: OpIdKey | undefined;   // parent in the RGA tree
+  lamport: number;
+  value?: T;
+  deleted: boolean;
+  deletedAt?: OpIdKey;
+  payloadReclaimed: boolean;
+}
+
+type VersionVector = Map<string, number>;   // replicaId -> highest contiguous applied seq
+```
+
+## Property tests
+
+18 correctness properties are specified in `design.md`. Implemented so far (all seeded, 200 runs each), for the RGA:
+
+- Convergence: any causal delivery order gives the identical sequence.
+- Idempotence: re-applying operations changes nothing.
+- Subtree contiguity at any depth.
+- Sibling-order invariant (newest first, child newer than parent).
+- A delete changes visibility only, never structural order.
+- A local insert at visible index k lands at visible index k.
+
+The test suite was also mutation-checked by hand: flipping the sibling order, or removing the replicaId tie-break, makes tests fail.
 
 ## Specification
 
 Full specification documents are in `.kiro/specs/crdt-kernel/`:
 
-- **requirements.md**: Functional and non-functional requirements (14 requirements)
-- **design.md**: Detailed design including algorithms, data structures, and invariants
-- **tasks.md**: 80 implementation tasks organized in 10 phases
+- `requirements.md`: the formal requirements
+- `design.md`: algorithms, data structures and invariants
+- `tasks.md`: 80 implementation tasks in 10 phases
 
-### Key Algorithms
+## Known limitations
 
-**Algorithm 1 - Lamport Ordering**: Elements ordered by `(lamport, replicaId)` with code-unit string comparison
+- A single trusted coordinator (no consensus protocol).
+- No Stage 2 GC: tombstones are retained forever; only payloads are reclaimed.
+- No sharding: every replica holds the whole document.
+- Sequence (RGA) only: no maps, sets or counters.
+- An evicted peer cannot merge old edits beyond its cutoff; it must rejoin from a snapshot as a new replica.
+- Educational scope: not optimized for production performance.
 
-**Algorithm 2 - RGA Insertion**: Find position by scanning past elements with lesser `(lamport, replicaId)` key
+## Prior art
 
-**Algorithm 3 - Dependency Buffering & Fencing**: 
-- Buffer ops missing anchor (INSERT) or target (DELETE)
-- Fence ops from stale epochs or beyond eviction cutoff
-- Apply when dependencies satisfied
-
-**Algorithm 5 - Stable Frontier**: `Frontier[r] = min{ack_m[r] : m in active_members}`
-
-**Algorithm 6 - GC Reclamation**: Reclaim payload if ANY delete op D satisfies `D.seq <= Frontier[D.replica]`
-
-## Implementation Roadmap
-
-### Phase 1: Setup (5 tasks)
-Repository structure, TypeScript config, test frameworks
-
-### Phase 2: Core Modules (23 tasks)
-Lamport, RGA, VersionVector, OpLog, Membership, GC, Snapshot
-
-### Phase 3: Orchestrator (4 tasks)
-CRDT class with public API and events
-
-### Phase 4: Testing Infrastructure (4 tasks)
-Network simulator, arbitraries, fixtures, builders
-
-### Phase 5: Unit Tests (9 tasks)
-Comprehensive coverage of all modules
-
-### Phase 6: Property-Based Tests (18 tasks)
-Correctness properties verified with fast-check
-
-### Phase 7: Integration Tests (5 tasks)
-Multi-replica scenarios
-
-### Phase 8: Documentation (4 tasks)
-API docs, architecture guide, rationale, integration guide
-
-### Phase 9: Transport & Coordinator (4 tasks)
-BroadcastChannel, IndexedDB, coordinator service, WebRTC
-
-### Phase 10: Applications (2 tasks)
-Graveyard Whiteboard and Cursed Checklist demos
-
-## Getting Started (Future)
-
-Once implementation begins:
-
-```bash
-# Install dependencies
-npm install
-
-# Run tests
-npm run test
-npm run test:watch
-npm run coverage
-
-# Build
-npm run build
-
-# Run with deterministic seeding
-SEED=12345 npm run test
-```
-
-## Data Structures
-
-### Operation (Op)
-```typescript
-interface Operation {
-  id: { replicaId: string; seq: number };
-  type: 'insert' | 'delete';
-  anchor?: OpId;           // insert: position after this
-  target?: OpId;           // delete: which element
-  value?: any;             // insert only
-  lamport: number;         // Lamport timestamp
-  replicaId: string;
-}
-```
-
-### Element (in RGA)
-```typescript
-interface Element<T> {
-  id: OpId;
-  lamport: number;
-  value?: T;
-  deleted: boolean;
-  deletedAt?: OpId;
-  payloadReclaimed: boolean;
-}
-```
-
-### VersionVector
-```typescript
-type VersionVector = Map<replicaId, seq>;
-// Component-wise max merge, contiguous prefix enforced
-```
-
-### Snapshot
-```typescript
-interface Snapshot<T> {
-  sequence: Element<T>[];
-  vv: VersionVector;
-  membership: MembershipView;
-  gcStats: GCStats;
-  metadata: {
-    creator: string;           // replicaId
-    logicalIndex: number;      // Lamport value
-    gcState: 'on' | 'off';
-  };
-}
-```
-
-## Correctness Guarantees
-
-1. **Strong Eventual Consistency**: All replicas converge to identical state given same operations
-2. **Causality Preservation**: If op A happened-before op B, all replicas apply A before B
-3. **No Data Loss**: All operations applied unless rejected by fencing
-4. **Determinism**: Same seed and operation sequence always produces identical replica states
-5. **Atomicity**: Each operation applied entirely or not at all
-6. **Idempotence**: Applying operation multiple times ≡ applying once
-
-## Known Limitations
-
-- **Single Coordinator**: Assumes single coordinator for frontier computation (no Raft consensus yet)
-- **No Stage 2 GC**: Tombstones never removed (retention continues indefinitely)
-- **No Sharding**: All operations on single replica (no horizontal scaling)
-- **RGA Only**: Other CRDT types (maps, sets, counters) not included
-- **Educational Scope**: Not optimized for production performance
-
-## Future Work
-
-- Raft-based coordinator for fault tolerance
-- Stage 2 GC with tombstone cleanup
-- Horizontal sharding by operation stream
-- Additional CRDT types (LWW-Element-Set, PN-Counter, etc.)
-- Performance benchmarking and optimization
-- Formal verification of correctness properties
-
-## Educational Value
-
-This project is designed to teach:
-
-1. **CRDT Fundamentals**: How concurrent replicas achieve eventual consistency
-2. **Lamport Clocks**: Logical time and causal ordering
-3. **Version Vectors**: Dependency tracking across distributed systems
-4. **Property-Based Testing**: Verifying complex system properties with random inputs
-5. **Deterministic Simulation**: Testing distributed systems without flaky timing
-6. **Specification-Driven Development**: Building from formal requirements and design
-
-## References
-
-- [BONES Project Specification](BONES_PROJECT_SPEC.md) — Full feature specification
-- `.kiro/specs/crdt-kernel/requirements.md` — Detailed requirements
-- `.kiro/specs/crdt-kernel/design.md` — Design and algorithms
-- `.kiro/specs/crdt-kernel/tasks.md` — Implementation task breakdown
+crdt.tech, the RGA paper (Roh et al.), Kleppmann and Beresford's JSON CRDT paper, Shapiro et al.'s CRDT paper, Yjs, Automerge and Loro. This project is an independent, from-scratch implementation for learning.
 
 ## License
 
-MIT License - Copyright 2026 Keerthivasan S.
-
-This is an educational project created as part of the BONES Initiative.
-
-## Disclaimer
-
-This implementation is for educational purposes. It is not a production-ready CRDT library and should not be used in production systems without significant hardening, performance optimization, and security review.
-
----
-
-**Ready to implement?** See `.kiro/specs/crdt-kernel/tasks.md` for the 80-task implementation roadmap starting with Phase 1 setup tasks.
+MIT. See [LICENSE](LICENSE). Copyright 2026 Keerthivasan S.
