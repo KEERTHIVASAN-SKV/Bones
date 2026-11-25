@@ -95,7 +95,10 @@ describe('Version Vector utilities', () => {
     expect(updated.get('a')).toBe(2);
     expect(vv.get('a')).toBe(1);
     expect(updated).not.toBe(vv);
-    expect(updateVersionVector(vv, 'a', 1)).toBe(vv);
+    // a lower value never decreases the entry, and the result is still a NEW Map (KER-011)
+    const same = updateVersionVector(vv, 'a', 1);
+    expect(same).not.toBe(vv);
+    expect(same.get('a')).toBe(1);
   });
 
   it('compares version vectors for causality', () => {

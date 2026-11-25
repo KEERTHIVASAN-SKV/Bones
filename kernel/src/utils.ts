@@ -128,25 +128,25 @@ export function mergeVersionVectors(vv1: VersionVector, vv2: VersionVector): Ver
 /**
  * Update a version vector with a single replica's new sequence.
  *
- * Returns a new VersionVector if the update is needed; otherwise returns the input unchanged.
- * This allows efficient immutability checking.
+ * Max semantics: the entry becomes `max(current, seq)`, so it never decreases. Always returns a
+ * NEW Map (the input is never returned or mutated), like every other function here.
+ *
+ * This is NOT the contiguous-prefix rule. It does not check that `seq` is the next sequence
+ * number, so it must not be used to advance the VV when applying operations; use
+ * `advanceContiguous` from vv.ts for that.
  *
  * @param vv - Original version vector
  * @param replicaId - Replica to update
  * @param seq - New sequence number
- * @returns Updated version vector (new Map if changed, same if unchanged)
+ * @returns New version vector with `max(current, seq)` for that replica
  */
 export function updateVersionVector(
   vv: VersionVector,
   replicaId: string,
   seq: number
 ): VersionVector {
-  const current = vv.get(replicaId) ?? 0;
-  if (seq <= current) {
-    return vv; // No update needed
-  }
   const result = new Map(vv);
-  result.set(replicaId, seq);
+  result.set(replicaId, Math.max(vv.get(replicaId) ?? 0, seq));
   return result;
 }
 
@@ -173,7 +173,10 @@ export function isEmptyVersionVector(vv: VersionVector): boolean {
 /**
  * Serialize a version vector to JSON (for storage/transmission).
  *
- * Returns a plain object: `{ replicaId: seq, ... }`
+ * Returns a plain object: `{ replicaId: seq, ... }`, with keys inserted in code-unit order, so
+ * two equal vectors serialize identically whatever order their entries were added in.
+ * (JavaScript itself always emits integer-like keys such as "9" and "10" in ascending numeric
+ * order; that is still deterministic, it just is not code-unit order for such keys.)
  *
  * @param vv - Version vector
  * @returns JSON-serializable object
@@ -181,8 +184,8 @@ export function isEmptyVersionVector(vv: VersionVector): boolean {
 export function serializeVersionVector(vv: VersionVector): Record<string, number> {
   // Null-prototype object so a replica ID such as "__proto__" stays an ordinary key.
   const result = Object.create(null) as Record<string, number>;
-  for (const [replicaId, seq] of vv) {
-    result[replicaId] = seq;
+  for (const replicaId of [...vv.keys()].sort(compareStrings)) {
+    result[replicaId] = vv.get(replicaId) as number;
   }
   return result;
 }
