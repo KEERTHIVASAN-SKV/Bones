@@ -270,7 +270,7 @@ Applications (KER-078 to KER-080)
 
 #### OpLog Module
 
-- [ ] 15. **Operation Log Append and Storage** (KER-015)
+- [x] 15. **Operation Log Append and Storage** (KER-015)
   - Create `src/oplog.ts` with:
     - `appendOp(log, op)` function: append operation to log
     - `getAllOps(log)` function: return all ops in order
@@ -287,7 +287,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-004, KER-005
   - **Validation**: Unit test: append ops → verify order; query by replica → verify filtering
 
-- [ ] 16. **Operation Deduplication in Log** (KER-016)
+- [x] 16. **Operation Deduplication in Log** (KER-016)
   - Implement `shouldAppendOp(log, op)` function: check if op already exists
   - Use Op ID as deduplication key (replicaId, seq)
   - Maintain seen set for O(1) lookup
@@ -300,7 +300,7 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-015
   - **Validation**: Unit test: append same op twice → verify log has it once
 
-- [ ] 17. **OpLog Deterministic Replay** (KER-017)
+- [x] 17. **OpLog Deterministic Replay** (KER-017)
   - Implement `replayLog(log, initialRGA)` function: replay all ops in order
   - Verify deterministic output (same log → same RGA state)
   - Support for rebuilding state from log

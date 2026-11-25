@@ -50,6 +50,24 @@ export function createRGA<T>(): RGAState<T> {
 }
 
 /**
+ * Deep-copy an RGA: elements, child lists and delete-op sets are all new objects, so the copy
+ * can be mutated without affecting the original. Payload values (`Element.value`) are NOT
+ * cloned; values are treated as immutable by the kernel.
+ *
+ * @param rga - RGA state to copy (not mutated)
+ * @returns An independent copy
+ */
+export function cloneRGA<T>(rga: RGAState<T>): RGAState<T> {
+  const elements = new Map<OpIdKey, Element<T>>();
+  for (const [id, element] of rga.elements) elements.set(id, { ...element });
+  const children = new Map<ParentKey, OpIdKey[]>();
+  for (const [parent, ids] of rga.children) children.set(parent, [...ids]);
+  const deleteOps = new Map<OpIdKey, Set<OpIdKey>>();
+  for (const [id, ops] of rga.deleteOps) deleteOps.set(id, new Set(ops));
+  return { elements, children, deleteOps };
+}
+
+/**
  * Compare two sibling elements by the RGA key `(lamport, replicaId)`.
  * Code-unit comparison only (never localeCompare). The Op ID string is a final tie-break
  * so the order stays total even for malformed input; for well-formed operations lamport

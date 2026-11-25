@@ -18,6 +18,15 @@ import {
   compareSiblingKeys,
   advanceContiguous,
   stableFrontier,
+  cloneRGA,
+  createOpLog,
+  appendOp,
+  shouldAppendOp,
+  getAllOps,
+  getOpsByReplica,
+  getOpAt,
+  logLength,
+  replayLog,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -36,6 +45,15 @@ describe('public API (index.ts) exposes the RGA', () => {
       compareSiblingKeys,
       advanceContiguous,
       stableFrontier,
+      cloneRGA,
+      createOpLog,
+      appendOp,
+      shouldAppendOp,
+      getAllOps,
+      getOpsByReplica,
+      getOpAt,
+      logLength,
+      replayLog,
     ]) {
       expect(typeof fn).toBe('function');
     }

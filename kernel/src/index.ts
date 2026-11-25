@@ -47,9 +47,16 @@ export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 // Version-vector rules beyond the helpers in utils.ts
 export { advanceContiguous, stableFrontier } from './vv.js';
 
+// Operation log
+export {
+  createOpLog, appendOp, shouldAppendOp, getAllOps, getOpsByReplica,
+  getOpAt, logLength, replayLog,
+} from './oplog.js';
+export type { OpLog } from './oplog.js';
+
 // Replicated Growable Array (anchor tree)
 export {
-  createRGA, applyInsert, applyDelete, insert, delete_,
+  createRGA, cloneRGA, applyInsert, applyDelete, insert, delete_,
   getSequence, isElementDeleted, markPayloadReclaimed, traverse,
   compareSiblingKeys,
 } from './rga.js';

@@ -32,7 +32,7 @@
 │   │   ├── types.ts                 # Core interfaces (Operation, Element, OpIdKey, etc.)
 │   │   ├── lamport.ts               # Lamport clock implementation
 │   │   ├── rga.ts                   # Replicated Growable Array
-│   │   ├── vv.ts                    # Version Vector
+│   │   ├── vv.ts                    # advanceContiguous + stableFrontier (other VV helpers are in utils.ts)
 │   │   ├── oplog.ts                 # Operation log
 │   │   ├── membership.ts            # Membership & epochs
 │   │   ├── gc.ts                    # Garbage collection

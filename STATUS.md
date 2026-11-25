@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 107 tests pass; line coverage of `kernel/src` only is 97.02% (`rga.ts` 98.5%, `utils.ts` 95.45%, `events.ts` 97.5%, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+Last verified run: typecheck, build, lint and purity clean; 125 tests pass; line coverage of `kernel/src` only is 97.33% (`oplog.ts` 100%, `vv.ts` 100%, `rga.ts` 98.6%, `events.ts` 97.5%, `utils.ts` 95.45%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
@@ -38,7 +38,10 @@ Last verified run: typecheck, build, lint and purity clean; 107 tests pass; line
 | KER-013 contiguous prefix | done (`advanceContiguous` in `kernel/src/vv.ts`; never skips, never regresses) |
 | KER-014 VV serialization | done (keys inserted in code-unit order; mutation-checked with `advanceContiguous` and `stableFrontier`) |
 | `stableFrontier` helper | done (`kernel/src/vv.ts`; component-wise minimum, missing = 0). Callers must pass one VV per ACTIVE member |
-| KER-015 onward | not started. Next: op log + buffer (KER-015 to KER-017), then the `CRDT` class |
+| KER-015 op log append / query | done (`kernel/src/oplog.ts`; append-only, application order) |
+| KER-016 op log dedup | done (Op ID set, O(1); 20,000 appends + checks tested) |
+| KER-017 deterministic replay | done (`replayLog`, plus `cloneRGA` in `rga.ts`; split replay equals full replay) |
+| KER-018 onward | not started. Next: dependency buffer helpers and the `CRDT` class (KER-030 to KER-032), then membership |
 
 ## Source of truth
 
