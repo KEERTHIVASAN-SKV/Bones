@@ -196,7 +196,8 @@ Full specification documents are in `.kiro/specs/crdt-kernel/`:
 - No sharding: every replica holds the whole document.
 - Sequence (RGA) only: no maps, sets or counters.
 - An evicted peer cannot merge old edits beyond its cutoff; it must rejoin from a snapshot as a new replica.
-- The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly. The kernel also does not limit the size of the dependency buffer: a peer that sends many operations with a gap before them makes all of them stay buffered (5,000 were tried), so it assumes peers are honest.
+- The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly. The kernel also does not limit the size of the dependency buffer: a peer that sends many operations with a gap before them makes all of them stay buffered (5,000 were tried), so it assumes peers are honest. A peer that sends an operation at the Lamport limit stops other replicas from creating local operations.
+- A replica that loses its state must come back with a new replica ID. If it reused its old ID, it would issue Op IDs that already exist (for example `alice:1` again, with different content); other replicas drop those as duplicates and silently diverge. The demo apps therefore create a new replica ID on every page load and never store it.
 - Educational scope: not optimized for production performance.
 
 ## Prior art
