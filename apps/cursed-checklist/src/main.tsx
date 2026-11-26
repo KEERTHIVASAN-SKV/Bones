@@ -1,6 +1,7 @@
-import { CRDT } from '@bones/kernel';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
 
-// Scaffold check (D1): the kernel resolves through the '@bones/kernel' alias.
-const probe = new CRDT<string>('scaffold.0');
-probe.insert(undefined, 'ok');
-document.getElementById('root')!.textContent = `kernel loaded: ${probe.getSequence().length} item`;
+// No <React.StrictMode>: in development it runs components and effects twice, so a replica or a
+// sync created inside a component would exist twice (two authors in one tab). Here both live in
+// session.ts, outside React; leaving StrictMode out keeps that rule from depending on a habit.
+createRoot(document.getElementById('root')!).render(<App />);

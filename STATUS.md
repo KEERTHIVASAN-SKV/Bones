@@ -1,6 +1,6 @@
 # Bones: Status
 
-Last updated: 2026-11-25 (after the CRDT pipeline and fixes F1 to F4). Submission deadline: Dec 3, 2026.
+Last updated: 2026-11-26 (after the CRDT pipeline, fixes F1 to F4 and the first working Cursed Checklist). Submission deadline: Dec 3, 2026.
 
 This is the only status document. Older ones are in `docs/archive/` and are historical.
 
@@ -18,6 +18,24 @@ node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
 Last verified run: typecheck, build, lint and purity clean; 230 tests pass; line coverage of `kernel/src` only is 98.37% (`crdt.ts` 97.05%, `rga.ts` 98.63%, `utils.ts` 97.79%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+
+## Cursed Checklist (`apps/cursed-checklist`, KER-080)
+
+```bash
+cd apps/cursed-checklist
+npm ci
+npm test       # 124 tests: replica 11, transport 4, sync 109
+npm run build  # tsc --noEmit + vite build
+```
+
+Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` reports 0 vulnerabilities. In real Edge, three tabs on one `BroadcastChannel` were driven by a throwaway script (not in the repo): 16 of 16 checks passed (live sync both ways, concurrent adds in the same order, late tab and reloaded tab catch up, a reloaded tab gets a new replica ID, HTML in an item shown as text, hostile messages on the channel ignored, no console errors).
+
+- **Works:** add, complete (= delete, leaves a tombstone), sync across tabs of one browser, catch-up through a hello every 3 s.
+- **Not built:** Graveyard panel, membership and eviction, stable frontier, GC, other browsers or devices, persistence. Limits are listed in the app README.
+- **S4 scope collapse:** collapsed on Nov 26 for schedule. (The plan text is not in the repo, so what was cut is not spelled out here; add it.)
+- **Finding (A5):** the document asked for `vitest` 5.1.1. That release was 8 days old on Nov 26, which fails the document's own two-week rule. Also, with npm 10.9.2, every `vitest` 4.1.x and 5.x release except 5.1.2 (1 day old) crashed the dependency resolver (`Cannot read properties of null (reading 'edgesOut')`). Chosen: `vitest` 5.1.0 (23 days old) with `legacy-peer-deps=true` in `apps/cursed-checklist/.npmrc`; `npm ci` works and `npm audit` is clean. `vitest` 4.0.18 was rejected (critical advisory).
+- **CI:** the `checklist` job runs on Node 22 (Vitest 5 needs `^22.12 || ^24 || >=26`); the `kernel` job stays on Node 20. The workflow has been simulated from a fresh clone (`npm ci`, `npm test`, `npm run build`, all exit 0) but has not run on GitHub: nothing has been pushed.
+- **Design choice:** `sync.ts` applies every valid operation and hides values that are not items at render time. Ignoring an operation with a bad value would leave a gap in its author's sequence and stall all later operations from that author.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
@@ -93,7 +111,7 @@ The hooks run from the repo root (confirmed: the Stop hook found `scripts/` and 
 
 - [x] MIT `LICENSE` at repo root
 - [x] `.kiro/` committed (specs, steering, hooks); not gitignored
-- [x] Two separate app folders: `apps/graveyard-whiteboard`, `apps/cursed-checklist` (placeholders)
+- [x] Two separate app folders: `apps/graveyard-whiteboard` (placeholder), `apps/cursed-checklist` (first working version, no Graveyard panel yet)
 - [x] `coordinator/` folder (placeholder)
 - [ ] Working kernel, two working apps, public URL(s)
 - [ ] Demo video, write-up covering specs, hooks and steering
