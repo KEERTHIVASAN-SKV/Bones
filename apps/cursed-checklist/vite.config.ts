@@ -6,6 +6,6 @@ import path from 'node:path';
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@bones/kernel': path.resolve(__dirname, '../../kernel/src/index.ts') },
+    alias: { '@bones/kernel': path.resolve(import.meta.dirname, '../../kernel/src/index.ts') },
   },
 });

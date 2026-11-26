@@ -11,3 +11,15 @@ jobs:
         working-directory: kernel
       - run: node scripts/quality-gate.mjs
       - run: node scripts/check-submission.mjs
+  checklist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/cursed-checklist/package-lock.json }
+      - run: npm ci
+        working-directory: apps/cursed-checklist
+      - run: npm test
+        working-directory: apps/cursed-checklist
+      - run: npm run build
+        working-directory: apps/cursed-checklist
