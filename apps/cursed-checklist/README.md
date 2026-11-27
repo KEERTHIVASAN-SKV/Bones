@@ -27,6 +27,12 @@ npm run build      # typecheck + production build into dist/
 
 `.npmrc` sets `legacy-peer-deps=true`. Without it, npm 10 fails to resolve the Vitest 5 and Vite 8 dependency tree (`Cannot read properties of null (reading 'edgesOut')`). All dependencies are pinned to exact versions.
 
+## Deploy (GitHub Pages)
+
+`.github/workflows/pages.yml` builds the app (running its tests first) with `BASE_PATH=/<repo>/cursed-checklist/`, runs `node scripts/assemble-site.mjs` to put every built app under `_site/<app>/` with a landing page, and publishes it with the official Pages actions. **One-time setup, which only the repository owner can do:** Settings, Pages, Build and deployment, Source: "GitHub Actions". After the first push to `main` the site is at `https://<user>.github.io/<repo>/`, the app at `.../cursed-checklist/` and the control page at `.../cursed-checklist/control.html`. Locally the same build works with `BASE_PATH` unset (`/`).
+
+The app and the control page must be opened from the same site (they share a `BroadcastChannel`), in windows of the same browser.
+
 ## How it works
 
 | File | Role |

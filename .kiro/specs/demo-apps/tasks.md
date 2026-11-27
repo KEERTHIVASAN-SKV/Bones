@@ -53,7 +53,8 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Dependencies: DA-4, DA-6.
 
 - [ ] DA-8. **Early deploy** (all steps; R9; Gate B)
-  - GitHub Pages workflow building the Checklist on Node 22, with its Vite `base`.
+  - Built, NOT yet live. `.github/workflows/pages.yml` (steps checked against the current GitHub Pages documentation: `configure-pages@v5`, `upload-pages-artifact@v4`, `deploy-pages@v4`, `pages: write` and `id-token: write` on the deploy job, the `github-pages` environment), `scripts/assemble-site.mjs` (one folder per built app plus a landing page; fails if nothing was built), and a validated `BASE_PATH` for the Vite `base`. The exact artifact the workflow would publish was built with `BASE_PATH=/Bones/cursed-checklist/`, served under `/Bones/` and passed the whole demo D1 to D5 three times in a row in real Edge (21 of 21 each).
+  - Still needed, by the repository owner: set Settings, Pages, Source to "GitHub Actions" and push to `main`. Until the workflow has run on GitHub nothing is deployed, so Gate B's "a deployed (public) URL exists" is NOT met, and the nightly check on the deployed URL cannot start.
   - Dependencies: DA-1.
 
 - [ ] DA-9. **Snapshot and Rejoin** (D6; R7; Gate C)

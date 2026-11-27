@@ -1,0 +1,54 @@
+name: pages
+# Builds the apps and publishes them with GitHub Pages. One-time setup in the repository:
+# Settings > Pages > Build and deployment > Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits instead of cancelling a deployment that is running.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # the whole repo is checked out: the app's aliases read ../../kernel and ../../coordinator
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/cursed-checklist/package-lock.json }
+      - run: npm ci
+        working-directory: apps/cursed-checklist
+      - run: npm test
+        working-directory: apps/cursed-checklist
+      - name: Build the Cursed Checklist
+        run: npm run build
+        working-directory: apps/cursed-checklist
+        env:
+          # the app lives at https://<user>.github.io/<repo>/cursed-checklist/
+          BASE_PATH: /${{ github.event.repository.name }}/cursed-checklist/
+      - name: Assemble the site
+        run: node scripts/assemble-site.mjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -29,3 +29,5 @@ Thumbs.db
 # IMPORTANT: .kiro MUST NOT be gitignored — hackathon rule
 # .kiro/ directory contains specs, steering, and hooks required by the submission
 # Never add .kiro to this file
+# The assembled GitHub Pages site (scripts/assemble-site.mjs)
+_site/
