@@ -68,7 +68,10 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 | F3 catch-up | done: `computeVVDifference`, `CRDT.opsSince`; sync property tests. Finding: a peer holding buffered operations can only send what it has applied, so catch-up can take more than one round; repeating the exchange converges |
 | F4 tombstones | done: `CRDT.getAllElements()` returns every element including deleted ones, as copies |
 | KER-018 to KER-022 membership, epochs, fencing, cutoffs, serialization | done (`kernel/src/membership.ts`, 108 tests incl. the public entry point). Edit ops are fenced by author + cutoff, control messages by epoch; `applyMembershipView` ignores a non-increasing epoch and ignores a higher-epoch view that contradicts known state. 42 mutants, all caught. Not yet wired into `CRDT` (the `isFenced` stub still accepts everything until KER-031/033) |
-| KER-023 onward (GC, frontier in `CRDT`, snapshots) | not started. Next: Stage 1 GC with log redaction (D-A), then `CRDT` integration |
+| KER-023 Stage 1 GC + decision D-A (log redaction) | done (`kernel/src/gc.ts`, `redactReclaimedPayloads` in `oplog.ts`; 29 + 9 tests; 18 + 7 mutants caught). Reclaims the payload when ANY delete of the element is stable. The tombstone count never goes down (structure is kept). The RGA and the log share one payload object, so `bytesSaved` counts each reclaimed payload once, and it is only true because GC clears both. Not yet called from `CRDT` |
+| KER-024, KER-025 frontier and causal stability | done (`computeStableFrontier`, `isCausallyStable` in `vv.ts`, 25 tests, 11 mutants caught) |
+| KER-026 GC stats | partly done: `buildGCStats` exists; `CRDT.getGCStats()` comes with the integration |
+| KER-027 onward (snapshots), `CRDT` integration (KER-030 to KER-033) | not started. Next: wire membership, frontier and GC into `CRDT` |
 
 ## Source of truth
 

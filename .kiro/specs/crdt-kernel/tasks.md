@@ -396,7 +396,8 @@ Applications (KER-078 to KER-080)
 
 #### Garbage Collector Module
 
-- [ ] 24. **Stage 1 GC Logic (Payload Reclamation)** (KER-023)
+- [x] 24. **Stage 1 GC Logic (Payload Reclamation)** (KER-023)
+  - **Status note**: done in `kernel/src/gc.ts` (`performStage1GC(rga, frontier)` returns `{ reclaimed, bytesReclaimed }`) plus decision D-A in `oplog.ts` (`redactReclaimedPayloads`: the log's insert op loses its `value` too, so the memory is really freed; see design.md Algorithm 6). Reclaims when ANY delete of the element is at or below the frontier; the insert being stable is not enough. 18 mutants in gc.ts and 7 in the redaction were all caught.
   - Create `src/gc.ts` with:
     - `performStage1GC(rga, stableFrontier)` function: identify reclaimable payloads
     - Mark payloads as reclaimed (set value to undefined, set `payloadReclaimed = true`)
@@ -412,7 +413,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-007, KER-010
   - **Validation**: Unit test: GC with frontier → verify payloads reclaimed; verify sequence unchanged
 
-- [ ] 25. **Stable Frontier Computation** (KER-024)
+- [x] 25. **Stable Frontier Computation** (KER-024)
+  - **Status note**: done as `computeStableFrontier(acks, activeMembers)` in `kernel/src/vv.ts` (on top of the existing `stableFrontier`). An active member that has not acked counts as empty and holds the frontier back; acks from evicted members or strangers are ignored.
   - Implement `computeStableFrontier(acknowledgedVVs, activeReplicas)` function: component-wise minimum
   - Only consider active replicas in minimum
   - Handle missing VVs (treat as 0)
@@ -425,7 +427,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-011, KER-018
   - **Validation**: Unit test: compute frontier with 3 replicas → verify minimum
 
-- [ ] 26. **Causally Stable Operation Identification** (KER-025)
+- [x] 26. **Causally Stable Operation Identification** (KER-025)
+  - **Status note**: done as `isCausallyStable(opId, frontier)` in `kernel/src/vv.ts`: compares sequence numbers (never Op ID strings); a malformed ID is never stable.
   - Implement `isCausallyStable(opId, stableFrontier)` function: check if op ≤ frontier
   - **Acceptance Criteria**:
     - Op at or below frontier is stable

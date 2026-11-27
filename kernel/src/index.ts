@@ -47,7 +47,13 @@ export { EventEmitter } from './events.js';
 export type { EventType, EventCallback, EventErrorHandler } from './events.js';
 
 // Version-vector rules beyond the helpers in utils.ts
-export { advanceContiguous, computeVVDifference, stableFrontier } from './vv.js';
+export {
+  advanceContiguous, computeVVDifference, stableFrontier, computeStableFrontier, isCausallyStable,
+} from './vv.js';
+
+// Stage 1 garbage collection (payload reclamation; the structure stays)
+export { performStage1GC, buildGCStats } from './gc.js';
+export type { GCResult } from './gc.js';
 
 // Dependency buffer for out-of-order operations
 export {
@@ -59,7 +65,7 @@ export type { BufferChecks } from './buffer.js';
 // Operation log
 export {
   createOpLog, appendOp, shouldAppendOp, getAllOps, getOpsByReplica,
-  getOpAt, logLength, replayLog,
+  getOpAt, logLength, replayLog, redactReclaimedPayloads,
 } from './oplog.js';
 export type { OpLog } from './oplog.js';
 

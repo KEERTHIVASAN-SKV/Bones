@@ -53,6 +53,11 @@ import {
   membershipFromJSON,
   serializeMembership,
   deserializeMembership,
+  computeStableFrontier,
+  isCausallyStable,
+  performStage1GC,
+  buildGCStats,
+  redactReclaimedPayloads,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -91,6 +96,28 @@ describe('public API (index.ts) exposes the RGA', () => {
     ]) {
       expect(typeof fn).toBe('function');
     }
+  });
+
+  it('exports GC: frontier from acks, stability check, reclaim a payload, redact the log, stats', () => {
+    for (const fn of [computeStableFrontier, isCausallyStable, performStage1GC, buildGCStats, redactReclaimedPayloads]) {
+      expect(typeof fn).toBe('function');
+    }
+    const rga = createRGA<string>();
+    const op: Operation<string> = { id: createOpId('r1', 1), type: 'insert', value: 'secret', lamport: 1, replicaId: 'r1' };
+    applyInsert(rga, op);
+    applyDelete(rga, { id: createOpId('r2', 1), type: 'delete', target: op.id, lamport: 2, replicaId: 'r2' });
+
+    const acks = new Map([['r1', new Map([['r2', 1]])], ['r2', new Map([['r2', 1]])]]);
+    const frontier = computeStableFrontier(acks, new Set(['r1', 'r2']));
+    expect(isCausallyStable(createOpId('r2', 1), frontier)).toBe(true);
+
+    const result = performStage1GC(rga, frontier);
+    expect(result.reclaimed).toEqual([op.id]);
+    const log = createOpLog<string>();
+    appendOp(log, op);
+    expect(redactReclaimedPayloads(log, result.reclaimed)).toBe(1);
+    expect(getAllOps(log)[0].value).toBeUndefined();
+    expect(buildGCStats(rga, result.bytesReclaimed, 0, frontier)).toMatchObject({ tombstoneCount: 1, payloadsReclaimed: 1 });
   });
 
   it('exports membership: evict with a cutoff, fence by author, round-trip through JSON', () => {

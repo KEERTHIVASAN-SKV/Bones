@@ -99,6 +99,40 @@ export function getOpsByReplica<T>(log: OpLog<T>, replicaId: string): Operation<
 }
 
 /**
+ * Drop the payload (`value`) of insert operations whose element's payload was just reclaimed by
+ * Stage 1 GC (decision D-A). Id, type, anchor, lamport and author stay, so the log keeps its
+ * length and order, replays to the same tree, and a peer that asks `opsSince` still gets a valid
+ * operation: it just carries no payload.
+ *
+ * Why this is safe: a payload is only reclaimed once a delete of its element is causally stable,
+ * so every active replica has already applied the insert AND the delete. A replica that joins
+ * later receives the insert without a value, then the delete, and shows the same visible
+ * sequence (the element is deleted, so its value was never going to be visible).
+ *
+ * Each redacted entry is REPLACED by a copy; the original operation object is never edited, so
+ * anyone still holding it (for example a message queued for sending) keeps its payload.
+ * Delete operations and inserts that have no value are left as they are.
+ *
+ * @param log - The log (entries are replaced in place)
+ * @param ids - Element IDs (= insert Op IDs) whose payload was reclaimed
+ * @returns How many entries lost a value
+ */
+export function redactReclaimedPayloads<T>(log: OpLog<T>, ids: Iterable<OpIdKey>): number {
+  const wanted = new Set<OpIdKey>(ids);
+  if (wanted.size === 0) return 0;
+  let redacted = 0;
+  for (let i = 0; i < log.entries.length; i++) {
+    const op = log.entries[i];
+    if (op.type !== 'insert' || op.value === undefined || !wanted.has(op.id)) continue;
+    const copy: Operation<T> = { ...op };
+    delete copy.value;
+    log.entries[i] = copy;
+    redacted++;
+  }
+  return redacted;
+}
+
+/**
  * Rebuild RGA state by applying every logged operation in order.
  *
  * Deterministic: the same log (and the same initial state) always yields the same result.

@@ -10,7 +10,8 @@
  * their inputs.
  */
 
-import type { VersionVector } from './types.js';
+import type { OpIdKey, VersionVector } from './types.js';
+import { isValidReplicaId, isValidSequence, parseOpId } from './utils.js';
 
 /**
  * Advance one replica's entry by exactly one, or leave the vector untouched.
@@ -92,4 +93,48 @@ export function stableFrontier(vvs: readonly VersionVector[]): VersionVector {
     if (min > 0) frontier.set(id, min);
   }
   return frontier;
+}
+
+/**
+ * The stable frontier from the version vectors that members acknowledged (design.md Algorithm 5;
+ * requirements.md 11.1 to 11.6; KER-024).
+ *
+ * Only ACTIVE members count, and every active member counts: one that has not acknowledged yet
+ * contributes an empty vector (it has applied nothing as far as anyone knows), so it holds the
+ * frontier back instead of being skipped. The acks of members that are not active (evicted, or
+ * strangers) are ignored, so an evicted member stops holding the frontier back immediately and
+ * a stranger cannot raise it. With no active members nothing is stable.
+ *
+ * The result is the minimum at THIS moment. The frontier must never move backwards: the caller
+ * (the coordinator, or `CRDT.updateStableFrontier`) keeps the largest value it has seen.
+ *
+ * @param acks - Latest acknowledged version vector per replica ID (not mutated)
+ * @param activeMembers - The members of the current membership view (not mutated)
+ * @returns A new vector (entries that come out as 0 are omitted)
+ */
+export function computeStableFrontier(
+  acks: ReadonlyMap<string, VersionVector>,
+  activeMembers: ReadonlySet<string>
+): VersionVector {
+  const vvs: VersionVector[] = [];
+  for (const member of activeMembers) vvs.push(acks.get(member) ?? new Map());
+  return stableFrontier(vvs);
+}
+
+/**
+ * Whether an operation is causally stable: every active member has applied it, because its
+ * sequence number is at or below the frontier entry for its author (KER-025). The check is by
+ * author and sequence number, never by comparing Op ID strings (`"a:10" < "a:9"` as text).
+ *
+ * A malformed Op ID (no colon, non-canonical or non-positive sequence number, invalid replica
+ * ID) is never stable.
+ *
+ * @param opId - The operation's ID
+ * @param frontier - The stable frontier (not mutated)
+ * @returns true if `opId` is at or below the frontier
+ */
+export function isCausallyStable(opId: OpIdKey, frontier: VersionVector): boolean {
+  const parsed = parseOpId(opId);
+  if (parsed === null || !isValidSequence(parsed.seq) || !isValidReplicaId(parsed.replicaId)) return false;
+  return (frontier.get(parsed.replicaId) ?? 0) >= parsed.seq;
 }

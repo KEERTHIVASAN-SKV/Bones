@@ -763,6 +763,15 @@ function performStage1GC<T>(
 - Bytes are added once per element, when it is reclaimed.
 - The visible sequence is identical with GC on or off.
 
+**Decision D-A: GC also redacts the operation log** (found in review: reclaiming only the RGA payload frees nothing while the log still holds the insert operation with its full value, and `opsSince` would hand a "reclaimed" payload to any late tab).
+
+- When `performStage1GC` reclaims an element, `CRDT` calls `redactReclaimedPayloads(log, reclaimedIds)` (`oplog.ts`): each matching insert entry is REPLACED by a copy without `value` (id, type, anchor, lamport and author stay, so the log keeps its length, order and replay). The original operation object is never edited.
+- Why it is safe: a delete only becomes stable when every active member has applied it, and a delete comes after its insert, so every active member already has the insert. A replica that joins later receives the insert without a value, then the delete, and ends with the same visible sequence. `assertValidOperation` does not require `value`, so a redacted operation is valid on the wire.
+- The RGA and the log normally share ONE payload object (`applyInsert` stores `op.value` by reference), so memory is only freed when BOTH references are dropped. That is why GC clears both. `GCStats.bytesSaved` counts each reclaimed payload once, using `estimatePayloadSize`. It is not the sum of "bytes cleared from the sequence" and "bytes cleared from the log", because that would count one payload twice. Benchmarks that report the bytes held in the sequence and in the log separately must say so.
+- A replica restored from a snapshot starts a FRESH log (Algorithm 7), so it can only answer a hello with operations after the snapshot point. This is a README limitation.
+- GC also forgets `rga.deleteOps` for a reclaimed element (it is never read again; Algorithm 8 seeds it only for elements that still hold a payload), including an entry that a late delete re-created.
+- The frontier is applied only with the replica's current epoch (requirement 11.8): `CRDT.updateStableFrontier(frontier, epoch)`.
+
 ---
 
 ### Algorithm 7: Snapshot Creation
