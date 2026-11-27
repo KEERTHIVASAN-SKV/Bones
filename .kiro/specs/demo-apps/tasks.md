@@ -23,8 +23,8 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - `apps/cursed-checklist`: `replica.ts`, `transport.ts`, `sync.ts`, `session.ts`, `App.tsx`. 124 tests; three real Edge tabs checked.
   - Dependencies: kernel `applyOp`, `opsSince`.
 
-- [ ] DA-2. **Kernel pieces the demo needs** (Gate A; kernel tasks KER-018 to KER-033)
-  - Membership with fencing by author and cutoff, Stage 1 GC with log redaction (D-A), `CRDT.updateMembership`, `updateStableFrontier`, queries, and the property tests.
+- [x] DA-2. **Kernel pieces the demo needs** (Gate A; kernel tasks KER-018 to KER-033)
+  - Done: membership with fencing by author and cutoff, Stage 1 GC with log redaction (D-A), `CRDT.updateMembership`, `updateStableFrontier(frontier, epoch)`, the eviction prepare hold (`holdAuthor`/`releaseAuthor`), queries, and the 22 Gate A property tests (frontier safety, GC safety including the redacted log, fencing). Snapshots (KER-027 to KER-029) are part of DA-9, not here.
   - Tracked in `.kiro/specs/crdt-kernel/tasks.md`.
 
 - [x] DA-3. **Coordinator core** (D3, D4; R5)
@@ -42,12 +42,14 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Tested: 17 adapter tests, 4 of them drive the real tab code on one bus (stall, exorcise, reclaim, refusal counters, a live target, a stalled survivor and abort). 22 mutants of the adapter were caught. A throwaway real-Edge check with the control page and three tabs passed 15 of 15: join, epoch 3 then 4, Exorcise, cutoff shown, the exorcised tab shows the banner and refuses edits, survivors keep syncing, no console errors. That check exorcises a LIVE tab: the Stall button comes with DA-6, so the stall-then-exorcise story is not yet checked in a browser.
   - Dependencies: DA-3, DA-4.
 
-- [ ] DA-6. **Graveyard panel in the Checklist** (D2, D3, D4; R4)
-  - Honest labels (see design.md). Stall and Stress buttons.
+- [x] DA-6. **Graveyard panel in the Checklist** (D2, D3, D4; R4)
+  - Done: `panel.ts` (`panelModel`, the numbers; `runStress`, 200 items of 100 characters added then buried through the normal `insert`/`delete`/`sendOp` path) and `GraveyardPanel.tsx` (renders them, plus the **Stall this tab** / **Resume** and **Stress** buttons). Labels: `tombstones (structure kept)`, `payloads reclaimed`, `payload bytes reclaimed`, `stable frontier`, `epoch`, `members`, `evicted`. It says plainly when no control page is running (nothing can be reclaimed then).
+  - Tested: 11 panel tests, 20 mutants caught. A throwaway real-Edge check of the whole demo script D1 to D5 (control page and three windows) passed 21 of 21: with C stalled, bytes reclaimed stays 0 on A and B after a 200-item stress run; after Exorcise it jumps to 22,200 and "200 of 200" payloads are reclaimed while the tombstone count stays 200.
+  - Order matters for the recording: stall C BEFORE pressing Stress. With every tab live the frontier catches up within a few seconds and the zeros never show.
   - Dependencies: DA-2, DA-4.
 
-- [ ] DA-7. **Fencing made visible** (D5; R6)
-  - Message in the panel when a paused or evicted tab's later edits are rejected.
+- [x] DA-7. **Fencing made visible** (D5; R6)
+  - Done: the survivors' panel shows "Refused N operations from <tab>: it was exorcised, and what it wrote beyond its cutoff is rejected" (counted once per distinct operation, from `sync.getStats().fenced`), and the exorcised tab shows a banner and a notice when an edit is refused. Covered by the DA-6 browser check (D5 steps).
   - Dependencies: DA-4, DA-6.
 
 - [ ] DA-8. **Early deploy** (all steps; R9; Gate B)

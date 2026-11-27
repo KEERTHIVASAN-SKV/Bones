@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { MAX_ITEM_LENGTH, isItem, visibleItems } from './replica';
 import type { ItemElement } from './replica';
+import { GraveyardPanel } from './GraveyardPanel';
 import { crdt, sync } from './session';
 
 /** The items to render; re-renders whenever the CRDT's visible sequence changes (local or remote). */
@@ -86,6 +87,7 @@ export function App() {
         ))}
       </ul>
       {items.length === 0 && <p>Nothing here. Open this page in a second tab to watch the two tabs sync.</p>}
+      <GraveyardPanel crdt={crdt} sync={sync} />
       <footer>
         <small>
           This tab is replica {crdt.replicaId}.{' '}
