@@ -7,7 +7,7 @@ Decides who is a member, what is stable, and who gets evicted, for the Bones dem
 `src/core.ts` is the whole decision logic as a **pure core**: it takes what happened (a hello, a reply, a time) and returns the effects the caller must perform (broadcast a view, broadcast a frontier, ask survivors to freeze a target). It has no I/O, no timers, no clock reads and no randomness, and `scripts/check-purity.mjs` enforces that. The caller passes `now`.
 
 ```ts
-import { CoordinatorCore } from '../coordinator/src/index.js'; // the apps will import it through an alias, like the kernel
+import { CoordinatorCore } from '@bones/coordinator'; // the apps import it through an alias, like @bones/kernel
 
 const core = new CoordinatorCore();
 const effects = core.onHello({ from: 'tab-1.0', epoch: 0, vv: crdt.getVV() }, now); // join, or ack
@@ -30,9 +30,9 @@ npm test          # 104 tests, 8 of them drive the core with real kernel replica
 
 The coordinator imports the kernel source through an alias, so it needs no kernel install of its own. Dev dependencies are pinned to the kernel's versions; `npm audit` reports the same dev-tooling advisories as the kernel.
 
-## What does not exist yet
+## Where it runs
 
-The adapters: the `/control` page inside each app (same origin as the tabs, because `BroadcastChannel` does not cross origins) and a Node service. Until they exist nothing here talks to a real tab. Limits to know about:
+In the Cursed Checklist, `control.html` (a second page of the same build, so it shares the tabs' origin and channel) runs the core through `apps/cursed-checklist/src/coordinatorAdapter.ts`. The Whiteboard will get the same page when the shared code is extracted. A Node service is not built. Limits to know about:
 
 - The core keeps its state in memory. Reloading the control page resets the coordinator; open tabs keep their view.
 - A reloaded tab gets a new replica ID. Its old ID stays a member, silent, and holds the frontier back until it is exorcised.

@@ -11,7 +11,7 @@ This is one of the two separate application folders required by the Skeleton Cre
 - A tab opened late, or reloaded, catches up from the other open tabs.
 - Each page load gets a new replica ID (`tab-<8 hex>.0`), shown at the bottom of the page. The ID is never stored.
 
-**Not built yet:** the Graveyard panel, membership and eviction, the stable frontier, garbage collection, other browsers or devices. The tombstones of completed items are kept and never reclaimed.
+**Not built yet:** the Graveyard panel, the Stall and Stress buttons, rejoin, other browsers or devices. Membership, the stable frontier and garbage collection exist but only run while the control page is open. The tombstones of completed items always stay; once the frontier passes their delete, only their text is reclaimed.
 
 ## Run it
 
@@ -21,7 +21,7 @@ Needs Node 22.12 or newer (Vitest 5).
 cd apps/cursed-checklist
 npm ci
 npm run dev        # open the printed URL in two tabs
-npm test           # 179 tests
+npm test           # 196 tests
 npm run build      # typecheck + production build into dist/
 ```
 
@@ -36,17 +36,19 @@ npm run build      # typecheck + production build into dist/
 | `src/protocol.ts` | the wire format: one place that encodes and parses every message (untrusted input) |
 | `src/sync.ts` | `startSync(crdt, transport)`: broadcasts local operations, applies received ones, answers "hello" messages, carries the coordinator's messages to the kernel, and can pause (stall) |
 | `src/session.ts` | the one replica and one sync per page load |
+| `control.html`, `src/control.tsx`, `src/ControlApp.tsx`, `src/controlSession.ts` | the control page: a second page of the same build (same origin, so it shares the channel) that runs the coordinator |
+| `src/coordinatorAdapter.ts` | runs the pure coordinator core (`coordinator/src/core.ts`) on a transport with an injected clock |
 | `src/App.tsx`, `src/main.tsx` | the UI (no `React.StrictMode`, see the comment in `main.tsx`) |
 
 **Catch-up.** `BroadcastChannel` does not replay messages sent before a tab opened. So every tab sends a hello with its version vector when it starts and every 3 seconds. A tab that hears a hello replies with the operations the sender lacks (`crdt.opsSince`). A tab that missed a message, or joined late, therefore catches up within one interval. Duplicated or reordered messages are harmless: the kernel drops duplicates and buffers operations that arrive early.
 
 **Untrusted input.** Any script on the same origin can post to the channel. `sync.ts` ignores anything that is not a well-formed message or a valid operation (the kernel validates operations), and never throws. An operation whose value is not a well-formed item is still **applied**, because dropping it would leave a gap in its author's sequence and stall every later operation from that author. The UI hides it (`visibleItems`). Item text is rendered as text by React, never as HTML.
 
-**Coordinator messages and pause.** `sync.ts` also speaks the coordinator's half of the wire format (`view`, `frontier`, `prepare`, `release`): a view goes to `crdt.updateMembership`, a frontier to `crdt.updateStableFrontier` (the kernel applies it only at this tab's epoch), `prepare` freezes the named tab and replies with the sequence number it holds, and `release` ends the freeze. `sync.pause()` is the demo's "stall": a paused tab sends and hears nothing, its local edits keep working and are counted, and `resume()` sends them and says hello. `sync.getStats()` reports whether the tab is paused, how many edits are unsent, and how many operations were refused by fencing, per author. **The coordinator itself (the `/control` page) and the panel that shows these numbers are not built yet**, so nothing in the running app sends these messages today.
+**Coordinator messages and pause.** `sync.ts` also speaks the coordinator's half of the wire format (`view`, `frontier`, `prepare`, `release`): a view goes to `crdt.updateMembership`, a frontier to `crdt.updateStableFrontier` (the kernel applies it only at this tab's epoch), `prepare` freezes the named tab and replies with the sequence number it holds, and `release` ends the freeze. `sync.pause()` is the demo's "stall": a paused tab sends and hears nothing, its local edits keep working and are counted, and `resume()` sends them and says hello. `sync.getStats()` reports whether the tab is paused, how many edits are unsent, and how many operations were refused by fencing, per author. **The control page** (`control.html`, next to the app page in the same build) runs the coordinator: open it once, keep it open, and every tab that says hello joins. It lists the members with when they were last heard, the epoch and the stable frontier, has an **Exorcise** button per member (and **Abort** while one is being prepared), and shows each exorcised tab with its cutoff and whether every tab holds its operations. A tab that was exorcised shows a banner and refuses new edits. **The Graveyard panel in the app page, the Stall button and Rejoin are not built yet.**
 
 ## Tests
 
-179 tests in 5 files (`replica.test.ts` 11, `transport.test.ts` 4, `sync.test.ts` 109, `protocol.test.ts` 43, `sync.coordinator.test.ts` 12), all run with `npm test`:
+196 tests in 6 files (`replica.test.ts` 11, `transport.test.ts` 4, `sync.test.ts` 109, `protocol.test.ts` 43, `sync.coordinator.test.ts` 12, `coordinatorAdapter.test.ts` 17), all run with `npm test`:
 
 - `sync.test.ts` uses in-memory networks (`src/test-support.ts`) and a real `BroadcastChannel`. It includes 25 seeded runs where three replicas edit over a network that loses 30% and duplicates 20% of messages and delivers in random order, then recovers and must converge. It also has a table of 58 malformed or hostile messages, each of which must change nothing and send nothing.
 - `sync.ts` was mutation-checked by hand: 23 deliberate bugs (drop the hello reply, subscribe after the first hello, accept an array version vector, rethrow errors, and so on), each caught by a test.

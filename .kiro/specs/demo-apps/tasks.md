@@ -37,8 +37,9 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Not here yet: nothing in the running app SENDS the coordinator's messages until the control page exists (DA-5), and no button calls `pause()` yet (DA-6).
   - Dependencies: DA-2.
 
-- [ ] DA-5. **`/control` page** (D4; R5)
-  - Second Vite entry in the same build. Members with last-heard time, frontier, epoch, **Exorcise** per member.
+- [x] DA-5. **`/control` page** (D4; R5)
+  - Done in `apps/cursed-checklist`: `control.html` is a second entry of the same Vite build (same origin as the app), `coordinatorAdapter.ts` runs the pure core on a transport with an injected clock, `ControlApp.tsx` lists members with last-heard time, the epoch, the frontier, an **Exorcise** button per member, an in-progress block with **Abort**, and the exorcised tabs with their cutoff and whether every tab holds them. The app page now shows a banner when its tab was exorcised, shows a notice instead of crashing when an edit is refused, and links to the control page.
+  - Tested: 17 adapter tests, 4 of them drive the real tab code on one bus (stall, exorcise, reclaim, refusal counters, a live target, a stalled survivor and abort). 22 mutants of the adapter were caught. A throwaway real-Edge check with the control page and three tabs passed 15 of 15: join, epoch 3 then 4, Exorcise, cutoff shown, the exorcised tab shows the banner and refuses edits, survivors keep syncing, no console errors. That check exorcises a LIVE tab: the Stall button comes with DA-6, so the stall-then-exorcise story is not yet checked in a browser.
   - Dependencies: DA-3, DA-4.
 
 - [ ] DA-6. **Graveyard panel in the Checklist** (D2, D3, D4; R4)

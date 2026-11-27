@@ -14,7 +14,10 @@
     "noImplicitReturns": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["vite/client"],
-    "paths": { "@bones/kernel": ["../../kernel/src/index.ts"] }
+    "paths": {
+      "@bones/kernel": ["../../kernel/src/index.ts"],
+      "@bones/coordinator": ["../../coordinator/src/index.ts"]
+    }
   },
   "include": ["src"]
 }
