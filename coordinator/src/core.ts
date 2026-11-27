@@ -229,7 +229,12 @@ export class CoordinatorCore {
     const effects: Effect[] = [];
 
     if (this.view.evictedMembers.has(from)) {
-      return [{ type: 'rejected', to: from, epoch: this.view.epoch }];
+      // Rejected, and told the current view: that is how an evicted tab learns its own cutoff, so
+      // its kernel refuses to create operations past it (demo step: the exorcised tab resumes).
+      return [
+        { type: 'rejected', to: from, epoch: this.view.epoch },
+        { type: 'view', view: getMembership(this.view) },
+      ];
     }
 
     if (!this.members.has(from)) {

@@ -157,6 +157,10 @@ describe('the demo story, with real replicas', () => {
     // 4. the coordinator rejects c's hello, and its epoch is stale, so it can learn it was evicted
     w.hello(c);
     expect(w.rejected.some((r) => r.to === 'c.0' && r.epoch === 4)).toBe(true);
+
+    // 5. it was also sent the view, so it learns its own cutoff and its kernel refuses to write past it
+    expect(c.crdt.getMembershipView().evictedMembers.get('c.0')).toBe(0); // the survivors never saw an operation of c's
+    expect(() => c.crdt.insert(undefined, 'one more')).toThrow(RangeError);
   });
 
   it('a LIVE tab can be exorcised too: the survivors freeze it, agree on the cutoff, and do not diverge', () => {

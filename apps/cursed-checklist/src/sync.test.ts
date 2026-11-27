@@ -33,6 +33,8 @@ interface Wire {
   t: string;
   op?: string;
   vv?: Record<string, number>;
+  from?: string;
+  epoch?: number;
 }
 const wire = (sent: string[]): Wire[] => sent.map((s) => JSON.parse(s) as Wire);
 const opIdsSent = (sent: string[]): string[] =>
@@ -54,13 +56,13 @@ describe('startSync: hello', () => {
   it('sends a hello with its version vector as soon as it starts', () => {
     const t = createBus().connect();
     start(replicaWithItems('a.0', 2), t);
-    expect(wire(t.sent)).toEqual([{ t: 'hello', vv: { 'a.0': 2 } }]);
+    expect(wire(t.sent)).toEqual([{ t: 'hello', from: 'a.0', epoch: 0, vv: { 'a.0': 2 } }]);
   });
 
   it('a replica with no operations sends an empty version vector', () => {
     const t = createBus().connect();
     start(createReplica('a.0'), t);
-    expect(wire(t.sent)).toEqual([{ t: 'hello', vv: {} }]);
+    expect(wire(t.sent)).toEqual([{ t: 'hello', from: 'a.0', epoch: 0, vv: {} }]);
   });
 
   it('sends a hello every HELLO_INTERVAL_MS (3 seconds) by default, carrying the CURRENT version vector', () => {

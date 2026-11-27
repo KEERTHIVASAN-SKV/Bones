@@ -254,7 +254,9 @@ describe('after the publish the eviction is PENDING until every active member ho
 
   it('the evicted member can never return under the same ID (its hello is rejected from then on)', () => {
     const core = evicted([2, 2]);
-    expect(core.onHello(hello('c.0', 4), 5000)).toEqual([{ type: 'rejected', to: 'c.0', epoch: 4 }]);
+    const effects = core.onHello(hello('c.0', 4), 5000);
+    expect(ofType(effects, 'rejected')).toEqual([{ type: 'rejected', to: 'c.0', epoch: 4 }]);
+    expect(ofType(effects, 'view')[0].view.evictedMembers.get('c.0')).toBe(2); // it is told its cutoff
     expect(core.getView().activeMembers.has('c.0')).toBe(false);
   });
 

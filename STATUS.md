@@ -24,13 +24,14 @@ Last verified run: typecheck, build, lint and purity clean; 560 tests pass; line
 ```bash
 cd apps/cursed-checklist
 npm ci
-npm test       # 124 tests: replica 11, transport 4, sync 109
+npm test       # 179 tests: replica 11, transport 4, sync 109, protocol 43, sync.coordinator 12
 npm run build  # tsc --noEmit + vite build
 ```
 
-Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` reports 0 vulnerabilities. In real Edge, three tabs on one `BroadcastChannel` were driven by a throwaway script (not in the repo): 16 of 16 checks passed (live sync both ways, concurrent adds in the same order, late tab and reloaded tab catch up, a reloaded tab gets a new replica ID, HTML in an item shown as text, hostile messages on the channel ignored, no console errors).
+Last verified run: 179 tests pass, `tsc` clean, build succeeds, `npm audit` reports 0 vulnerabilities. In real Edge, three tabs on one `BroadcastChannel` were driven by a throwaway script (not in the repo): 16 of 16 checks passed (live sync both ways, concurrent adds in the same order, late tab and reloaded tab catch up, a reloaded tab gets a new replica ID, HTML in an item shown as text, hostile messages on the channel ignored, no console errors).
 
 - **Works:** add, complete (= delete, leaves a tombstone), sync across tabs of one browser, catch-up through a hello every 3 s.
+- **Wire v2 (DA-4):** `protocol.ts` parses and encodes every message in one place; `hello` carries `from` and `epoch`; `sync.ts` carries `view`, `frontier`, `prepare` and `release` to the kernel, replies to `prepare` with the frozen seq, and has `pause()`/`resume()` (a stalled tab sends and hears nothing, its edits are counted and sent on resume) plus a per-author count of operations refused by fencing. 55 new tests, 42 mutants caught; the three-tab Edge check was re-run on the rebuilt app (16 of 16). Nothing in the running app sends the coordinator's messages yet: that needs the control page (DA-5).
 - **Not built:** Graveyard panel, membership and eviction, stable frontier, GC, other browsers or devices, persistence. Limits are listed in the app README.
 - **S4 scope collapse (Nov 26, collapsed for schedule):** the unit-test group (KER-038 to KER-47) is not tracked separately because each module ships with its tests; the property-test group (KER-48 to KER-65, the 18 properties in `design.md`) is reduced to 8 properties (convergence, idempotence, VV contiguity, delete-before-insert, frontier safety, GC safety, fencing, snapshot rejoin); the network simulator (KER-034) is replaced by seeded shuffle/duplicate helpers inside the tests; integration tests (KER-66 to KER-70) are reduced to two; documentation tasks (KER-71 to KER-74) are covered by the README, `design.md` and this file instead of separate documents. The task IDs here are checked against `tasks.md`: the plan text gave KER-047 to KER-064, KER-065 to KER-069 and KER-070 to KER-073, which are one lower than the headers in this repo.
 - **Finding (A5):** the document asked for `vitest` 5.1.1. That release was 8 days old on Nov 26, which fails the document's own two-week rule. Also, with npm 10.9.2, every `vitest` 4.1.x and 5.x release except 5.1.2 (1 day old) crashed the dependency resolver (`Cannot read properties of null (reading 'edgesOut')`). Chosen: `vitest` 5.1.0 (23 days old) with `legacy-peer-deps=true` in `apps/cursed-checklist/.npmrc`; `npm ci` works and `npm audit` is clean. `vitest` 4.0.18 was rejected (critical advisory).
@@ -50,10 +51,10 @@ npm test
 Last verified run: typecheck and lint clean; 104 tests pass; `core.ts` has 100% line coverage. `npm audit` reports the same dev-tooling advisories as the kernel (vitest, vite, esbuild, ESLint plugins; no runtime dependencies). `@types/node` is pinned to 22.20.5, the newest 22.x that is at least two weeks old.
 
 - **Built:** `coordinator/src/core.ts`, the pure decision logic (`CoordinatorCore`). A hello is the acknowledgement; the stable frontier is the kernel's `computeStableFrontier` over active members, kept monotonic and re-broadcast so a lost message cannot strand GC; eviction is manual and two-phase (prepare, cutoff = max of the survivors' replies, publish, pending until every active member holds the target's operations up to the cutoff); stale-epoch and non-member control messages are refused; nothing is evicted automatically.
-- **Tested:** 104 tests. Eight drive the core together with real kernel replicas: stall, exorcise, reclaim, fence; a live target; a stalled survivor and abort; a lost prepare; a missed view. 45 mutants of `core.ts` were applied, all caught.
+- **Tested:** 104 tests. Eight drive the core together with real kernel replicas: stall, exorcise, reclaim, fence; a live target; a stalled survivor and abort; a lost prepare; a missed view. 47 mutants of `core.ts` were applied, all caught.
 - **Guard rails:** `scripts/check-purity.mjs` and the purity hook now also cover `coordinator/src/core.ts` (checked: a planted `Date.now`, `Math.random`, timer, `console` or `fetch` is reported). CI has a `coordinator` job on Node 22 (parsed, not yet run on GitHub).
 - **Deviation from the Nov 26 plan:** the plan's wire list has no prepare round, but requirement 10.3 needs one (survivors must freeze the target and report their seq, or a live target splits them). `prepare`, `prepared`, `release` and `rejected` were added; there is still no separate confirm message (the hello is the confirmation). Recorded in `.kiro/specs/demo-apps/design.md`.
-- **Not built:** the adapters that carry it to real tabs (the `/control` page and `sync.ts` wire v2; DA-4, DA-5), so nothing talks to a real tab yet.
+- **Not built:** the `/control` page that runs it in a browser (DA-5). The tab side of the wire (`protocol.ts`, `sync.ts`) is built (DA-4), so nothing talks to a real tab yet only because no page runs the core.
 
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 

@@ -136,8 +136,14 @@ describe('a hello from a member is its acknowledgement', () => {
     core.onPrepared({ from: 'a.0', target: 'b.0', epoch: 2, seq: 0 }, 6000);
     expect(core.getView().epoch).toBe(3);
     const effects = core.onHello(hello('b.0', 2, { 'b.0': 4 }), 7000);
-    expect(effects).toEqual([{ type: 'rejected', to: 'b.0', epoch: 3 }]);
+    // rejected, AND the current view, so the evicted tab learns its own cutoff (and can refuse to write past it)
+    expect(effects).toHaveLength(2);
+    expect(ofType(effects, 'rejected')).toEqual([{ type: 'rejected', to: 'b.0', epoch: 3 }]);
+    const [view] = ofType(effects, 'view');
+    expect(view.view.epoch).toBe(3);
+    expect(view.view.evictedMembers.get('b.0')).toBe(0);
     expect(core.getView().activeMembers.has('b.0')).toBe(false);
+    expect(core.getStatus(7000, 1000).members.map((m) => m.id)).toEqual(['a.0']); // its ack was not recorded
   });
 });
 

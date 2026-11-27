@@ -1209,7 +1209,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Test: save → reload → verify state
 
 - [ ] 77. **Coordinator Service (Node.js) [MUST]** (KER-77)
-  - **Status note**: partly done: the decision logic is `coordinator/src/core.ts` (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 104 tests and 45 mutants caught. **Open** (box stays unticked): the adapters that carry it (the `/control` page in each app and a Node service with HTTP or WebSocket), the Graveyard panel display, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/`opsSince` exchange).
+  - **Status note**: partly done: the decision logic is `coordinator/src/core.ts` (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 104 tests and 47 mutants caught. **Open** (box stays unticked): the adapters that carry it (the `/control` page in each app and a Node service with HTTP or WebSocket), the Graveyard panel display, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/`opsSince` exchange).
   - Create Node.js coordinator service:
     - Collect VV acknowledgments from replicas
     - Compute stable frontier

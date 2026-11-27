@@ -28,12 +28,13 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Tracked in `.kiro/specs/crdt-kernel/tasks.md`.
 
 - [x] DA-3. **Coordinator core** (D3, D4; R5)
-  - Done: `coordinator/src/core.ts` (`CoordinatorCore`: `onHello`, `startEviction`, `onPrepared`, `abortEviction`, `getStatus`), pure (checked by `scripts/check-purity.mjs`), 104 tests including 8 that drive it with real kernel replicas (stall, exorcise, reclaim, fence, a live target, lost messages), 45 mutants caught.
+  - Done: `coordinator/src/core.ts` (`CoordinatorCore`: `onHello`, `startEviction`, `onPrepared`, `abortEviction`, `getStatus`), pure (checked by `scripts/check-purity.mjs`), 104 tests including 8 that drive it with real kernel replicas (stall, exorcise, reclaim, fence, a live target, lost messages), 47 mutants caught.
   - Not here yet: the adapters that turn effects into messages (DA-4, DA-5).
   - Dependencies: DA-2.
 
-- [ ] DA-4. **Wire v2 and `pause()`** (D3, D5; R3, R5)
-  - `hello` gains `from` and `epoch`; new `view` and `frontier` messages; `Sync.pause()/resume()` with an unsent-edits counter.
+- [x] DA-4. **Wire v2 and `pause()`** (D3, D5; R3, R5)
+  - Done in `apps/cursed-checklist`: `protocol.ts` (one parser and the encoders for every message), `hello` carries `from` and `epoch`, `view`, `frontier`, `prepare`, `prepared`, `release`, `rejected`; `sync.ts` carries them to the kernel and has `pause()`/`resume()`, an unsent-edits counter and a per-author count of operations refused by fencing (`getStats`, `subscribe`). 179 app tests (55 new), 42 mutants caught; the three-tab Edge check still passes 16 of 16.
+  - Not here yet: nothing in the running app SENDS the coordinator's messages until the control page exists (DA-5), and no button calls `pause()` yet (DA-6).
   - Dependencies: DA-2.
 
 - [ ] DA-5. **`/control` page** (D4; R5)
