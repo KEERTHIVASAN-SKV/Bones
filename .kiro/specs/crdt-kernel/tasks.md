@@ -562,7 +562,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: insert/delete → query → verify accuracy
 
 - [ ] 34. **CRDT Events and Membership Updates** (KER-033)
-  - **Status note**: partly done: `on`/`off`, `sequenceChanged`, `membershipChanged` and `gcEvent` work. `updateMembership(view)` returns whether the view was installed (ignores a non-increasing or contradictory epoch, purges buffered ops that are now fenced). `updateStableFrontier(frontier, epoch)` takes the epoch (requirement 11.8: applied only at the current epoch), merges monotonically, runs Stage 1 GC and redacts the log (D-A). **Open** (box stays unticked): `snapshot()` and `rejoinFromSnapshot` (KER-027 to KER-029). Event payloads are not implemented: the listeners take no arguments.
+  - **Status note**: partly done: `on`/`off`, `sequenceChanged`, `membershipChanged` and `gcEvent` work. `updateMembership(view)` returns whether the view was installed (ignores a non-increasing or contradictory epoch, purges buffered ops that are now fenced, and ends the hold of an author it evicts). `updateStableFrontier(frontier, epoch)` takes the epoch (requirement 11.8), merges monotonically, runs Stage 1 GC and redacts the log (D-A). Eviction prepare phase (requirements 10.3): `holdAuthor(id)` buffers that author's operations and returns the contiguous applied seq to reply with; `releaseAuthor(id)` ends a hold. **Open** (box stays unticked): `snapshot()` and `rejoinFromSnapshot` (KER-027 to KER-029). Event payloads are not implemented: the listeners take no arguments.
   - Implement event system:
     - `on(event, callback)`: register listener
     - `off(event, callback)`: unregister listener

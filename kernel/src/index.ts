@@ -58,7 +58,7 @@ export type { GCResult } from './gc.js';
 
 // Dependency buffer for out-of-order operations
 export {
-  createOperationBuffer, bufferOp, takeReadyFromBuffer, purgeFencedBuffered,
+  createOperationBuffer, bufferOp, takeReadyFromBuffer, takeBufferedOp, purgeFencedBuffered,
   refreshMissing, DEFAULT_MISSING_LIMIT,
 } from './buffer.js';
 export type { BufferChecks } from './buffer.js';

@@ -140,6 +140,22 @@ export function takeReadyFromBuffer<T>(
 }
 
 /**
+ * Remove ONE operation from the buffer (and from the `waiting` index) and return it, so the
+ * caller can apply it through the normal pipeline. Used when a held author is released.
+ *
+ * @param buffer - The buffer (mutated)
+ * @param id - The operation to take
+ * @returns The operation, or undefined if it is not buffered (nothing changes)
+ */
+export function takeBufferedOp<T>(buffer: OperationBuffer<T>, id: OpIdKey): Operation<T> | undefined {
+  const op = buffer.ops.get(id);
+  if (op === undefined) return undefined;
+  buffer.ops.delete(id);
+  unindex(buffer, op);
+  return op;
+}
+
+/**
  * Remove and report every buffered op that is fenced. Call it when membership changes (a
  * full scan is fine: that is rare). Removing ops never makes another op ready, so no draining
  * is needed afterwards.

@@ -29,13 +29,20 @@ import type {
 import {
   assertValidOperation,
   assertValidVersionVector,
+  createOpId,
   isValidReplicaId,
   MAX_LAMPORT,
   mergeVersionVectors,
   parseOpId,
 } from './utils.js';
 import { advanceContiguous, isCausallyStable } from './vv.js';
-import { bufferOp, createOperationBuffer, purgeFencedBuffered, takeReadyFromBuffer } from './buffer.js';
+import {
+  bufferOp,
+  createOperationBuffer,
+  purgeFencedBuffered,
+  takeBufferedOp,
+  takeReadyFromBuffer,
+} from './buffer.js';
 import { appendOp, createOpLog, getAllOps, redactReclaimedPayloads } from './oplog.js';
 import type { OpLog } from './oplog.js';
 import { applyMembershipView, assertValidMembershipView, getMembership, isFenced as isFencedByView } from './membership.js';
@@ -95,6 +102,8 @@ export class CRDT<T = unknown> {
   private frontier: VersionVector = new Map();
   /** Cumulative estimated payload bytes freed by Stage 1 GC (each payload counted once). */
   private bytesSaved = 0;
+  /** Authors whose operations are held back (buffered, not applied): the eviction prepare phase. */
+  private readonly held = new Set<string>();
 
   /**
    * @param replicaId - Unique ID of this replica; letters, digits, `_`, `-` and `.` only
@@ -265,29 +274,41 @@ export class CRDT<T = unknown> {
       return { status: 'buffered', changed: false, unblocked: [], fenced: [] };
     }
 
+    const { unblocked, fenced, changed } = this.applyAndDrain(op);
+    if (changed) this.events.emit('sequenceChanged');
+    return { status: 'applied', changed, unblocked, fenced };
+  }
+
+  /**
+   * Apply one READY operation, then every buffered operation it unblocks, with an iterative
+   * queue (no recursion). Does not emit events: the caller emits `sequenceChanged` once.
+   */
+  private applyAndDrain(first: Operation<T>): { unblocked: OpIdKey[]; fenced: OpIdKey[]; changed: boolean } {
     const checks = {
       isReady: (candidate: Operation<T>) => this.isReady(candidate),
       isFenced: (candidate: Operation<T>) => this.isFenced(candidate),
     };
-    const queue: Operation<T>[] = [op];
+    const queue: Operation<T>[] = [first];
     const unblocked: OpIdKey[] = [];
     const fenced: OpIdKey[] = [];
     let changed = false;
     for (let head = 0; head < queue.length; head++) {
       const next = queue[head];
       if (this.applyReadyOp(next)) changed = true;
-      if (next !== op) unblocked.push(next.id);
+      if (next !== first) unblocked.push(next.id);
       for (const ready of takeReadyFromBuffer(this.buffer, next, checks, fenced)) queue.push(ready);
     }
-
-    if (changed) this.events.emit('sequenceChanged');
-    return { status: 'applied', changed, unblocked, fenced };
+    return { unblocked, fenced, changed };
   }
 
-  /** Ready = it is the author's next seq AND its anchor (insert) / target (delete) is applied. */
+  /**
+   * Ready = it is the author's next seq AND its anchor (insert) / target (delete) is applied,
+   * AND its author is not held (eviction prepare phase: a held author's operations wait).
+   */
   private isReady(op: Operation<T>): boolean {
     const parsed = parseOpId(op.id);
     if (parsed === null) return false;
+    if (this.held.has(parsed.replicaId)) return false;
     if (parsed.seq !== (this.vv.get(parsed.replicaId) ?? 0) + 1) return false;
     if (op.type === 'insert') return op.anchor === undefined || this.rga.elements.has(op.anchor);
     return op.target !== undefined && this.rga.elements.has(op.target);
@@ -436,8 +457,83 @@ export class CRDT<T = unknown> {
     }
     this.membership = next;
     purgeFencedBuffered(this.buffer, (op) => this.isFenced(op));
+    // The eviction of a held author ends its hold (publish and reconcile, requirements.md 10.3):
+    // what lies beyond the cutoff was just purged, what lies within it is applied now.
+    let sequenceChanged = false;
+    for (const author of [...this.held]) {
+      if (next.evictedMembers.has(author) && this.releaseHeld(author).changed) sequenceChanged = true;
+    }
+    if (sequenceChanged) this.events.emit('sequenceChanged');
     this.events.emit('membershipChanged');
     return true;
+  }
+
+  /**
+   * Eviction PREPARE phase (requirements.md 10.3): stop applying NEW operations from `authorId`
+   * and report how many of its operations this replica has applied.
+   *
+   * From now on that author's operations are BUFFERED (never applied, never dropped; the
+   * version vector entry stays frozen) until the hold ends: `releaseAuthor`, or the view that
+   * evicts that author is installed. Without the hold, a survivor could apply one more of a live
+   * target's operations after the coordinator read its version vector, keep an operation that
+   * every other survivor fences, and diverge for good.
+   *
+   * @param authorId - The replica about to be evicted (not this replica)
+   * @returns The CONTIGUOUS applied seq for that author at this moment (0 if none): the reply to
+   *   the coordinator's `evict-prepare`. Operations waiting behind a gap are not counted.
+   * @throws TypeError if the ID is not a valid replica ID
+   * @throws RangeError if `authorId` is this replica (it never holds back its own operations)
+   */
+  holdAuthor(authorId: string): number {
+    this.assertReplicaIdArgument(authorId);
+    if (authorId === this.replicaId) throw new RangeError('CRDT: a replica cannot hold its own operations');
+    this.held.add(authorId);
+    return this.vv.get(authorId) ?? 0;
+  }
+
+  /**
+   * Whether `authorId`'s operations are currently held back.
+   *
+   * @param authorId - A replica ID
+   * @returns true between `holdAuthor` and the release
+   */
+  isAuthorHeld(authorId: string): boolean {
+    return this.held.has(authorId);
+  }
+
+  /**
+   * End a hold (for example when the coordinator aborts an eviction) and apply the held
+   * operations that are ready, in order, through the normal pipeline. Operations that still wait
+   * for a missing predecessor stay buffered. Does nothing for an author that is not held. (The
+   * hold also ends by itself when the view that evicts the author is installed.)
+   *
+   * @param authorId - The replica to release
+   * @returns The IDs of the operations applied by the release, in application order
+   * @throws TypeError if the ID is not a valid replica ID
+   */
+  releaseAuthor(authorId: string): OpIdKey[] {
+    this.assertReplicaIdArgument(authorId);
+    const result = this.releaseHeld(authorId);
+    if (result.changed) this.events.emit('sequenceChanged');
+    return result.applied;
+  }
+
+  private assertReplicaIdArgument(id: string): void {
+    if (typeof id !== 'string' || !isValidReplicaId(id)) {
+      throw new TypeError(`CRDT: invalid replica ID ${String(id)}`);
+    }
+  }
+
+  /** Drop the hold and apply what is ready. Emits no event; the caller does. */
+  private releaseHeld(authorId: string): { applied: OpIdKey[]; changed: boolean } {
+    if (!this.held.delete(authorId)) return { applied: [], changed: false };
+    // Nothing fenced can be buffered here: `updateMembership` purges whenever a view is installed.
+    const nextId = createOpId(authorId, (this.vv.get(authorId) ?? 0) + 1);
+    const candidate = this.buffer.ops.get(nextId);
+    if (candidate === undefined || !this.isReady(candidate)) return { applied: [], changed: false };
+    takeBufferedOp(this.buffer, nextId);
+    const { unblocked, changed } = this.applyAndDrain(candidate);
+    return { applied: [candidate.id, ...unblocked], changed };
   }
 
   /**

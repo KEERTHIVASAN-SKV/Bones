@@ -30,6 +30,7 @@ import {
   createOperationBuffer,
   bufferOp,
   takeReadyFromBuffer,
+  takeBufferedOp,
   purgeFencedBuffered,
   refreshMissing,
   assertValidOperation,
@@ -89,6 +90,7 @@ describe('public API (index.ts) exposes the RGA', () => {
       createOperationBuffer,
       bufferOp,
       takeReadyFromBuffer,
+      takeBufferedOp,
       purgeFencedBuffered,
       refreshMissing,
       assertValidOperation,
@@ -121,9 +123,17 @@ describe('public API (index.ts) exposes the RGA', () => {
     expect(a.getGCStats()).toMatchObject({ tombstoneCount: 1, payloadsReclaimed: 1 });
     expect(a.getGCStats().bytesSaved).toBeGreaterThan(0);
 
-    // evict b: a view with a higher epoch installs, and b's later operations are fenced
-    expect(a.updateMembership(removeReplica(members, 'b.0', b.getVV().get('b.0') ?? 0))).toBe(true);
+    // prepare phase: hold b, so what b writes while the eviction is in flight is buffered, not applied
+    expect(a.holdAuthor('b.0')).toBe(0);
+    expect(a.isAuthorHeld('b.0')).toBe(true);
+    const inFlight = b.insert(undefined, 'in flight');
+    expect(a.applyOp(inFlight).status).toBe('buffered');
+
+    // evict b: a view with a higher epoch installs (and ends the hold), and b's later operations are fenced
+    expect(a.updateMembership(removeReplica(members, 'b.0', 0))).toBe(true); // cutoff = a's reply to the prepare
     expect(a.getMembershipView().epoch).toBe(1);
+    expect(a.isAuthorHeld('b.0')).toBe(false);
+    expect(a.getPendingCount()).toBe(0); // the in-flight operation lay beyond the cutoff: purged
     expect(a.applyOp(b.insert(undefined, 'too late')).status).toBe('fenced');
   });
 

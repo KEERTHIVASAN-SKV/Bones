@@ -200,6 +200,56 @@ describe('Property: fencing by author + cutoff', () => {
       RUNS
     );
   });
+  it('with the PREPARE hold, survivors converge even when the live target\'s operations keep arriving between the prepare and the view', () => {
+    fc.assert(
+      fc.property(
+        stepsArb(1, 40),
+        fc.integer({ min: 0, max: 1_000_000 }),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        (first, arriveSeed, shuffleSeed, orderSeed) => {
+          const replicas = makeReplicas(activeView(NAMES));
+          const [r1, r2, r3] = replicas;
+          runSteps(replicas, first, []);
+
+          // prepare: each survivor freezes the victim and replies with its contiguous applied seq
+          const replies = [r1.holdAuthor(VICTIM), r2.holdAuthor(VICTIM)];
+          const cutoff = Math.max(...replies);
+
+          // the victim is alive: its operations keep arriving, at one survivor, the other, or both
+          const victimOps = r3.getOps().filter((o) => o.replicaId === VICTIM);
+          for (const op of shuffle(victimOps, arriveSeed)) {
+            if ((arriveSeed + seqOf(op)) % 3 !== 0) r1.applyOp(op);
+            if ((arriveSeed + seqOf(op)) % 3 !== 1) r2.applyOp(op);
+          }
+          // NOTHING of the victim was applied while held
+          expect(r1.getVV().get(VICTIM) ?? 0).toBe(replies[0]);
+          expect(r2.getVV().get(VICTIM) ?? 0).toBe(replies[1]);
+
+          // publish, in either order, then reconcile and see everything the victim ever wrote
+          const published = removeReplica(activeView(NAMES), VICTIM, cutoff);
+          const installOrder = orderSeed % 2 === 0 ? [r1, r2] : [r2, r1];
+          for (const survivor of installOrder) expect(survivor.updateMembership(published)).toBe(true);
+          syncAll([r1, r2]);
+          for (const op of shuffle(victimOps, shuffleSeed)) {
+            r1.applyOp(op);
+            r2.applyOp(op);
+          }
+          syncAll([r1, r2]);
+
+          expect(visible(r1)).toEqual(visible(r2));
+          expect(structure(r1)).toEqual(structure(r2));
+          for (const survivor of [r1, r2]) {
+            expect(survivor.getVV().get(VICTIM) ?? 0).toBe(cutoff);
+            expect(survivor.getPendingCount()).toBe(0);
+            expect(survivor.isAuthorHeld(VICTIM)).toBe(false);
+          }
+        }
+      ),
+      RUNS
+    );
+  });
+
   it('after the eviction the frontier over the survivors moves, and every tombstone can then be reclaimed (liveness)', () => {
     fc.assert(
       fc.property(stepsArb(1, 40), fc.integer({ min: 0, max: 1_000_000 }), (first, leakSeed) => {

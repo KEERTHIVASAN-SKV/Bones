@@ -1343,6 +1343,10 @@ Manages:
 Operator: Exorcise(target)
 1. Coordinator -> all active members: evict-prepare(target)
 2. Each member: stop applying NEW ops from target; reply with contiguous applied seq for target
+   (kernel: `crdt.holdAuthor(target)` does both: it buffers the target's operations from now on, never dropping
+   them, and returns the contiguous applied seq to reply with. The hold ends by itself when the view that evicts
+   the target is installed with `updateMembership`: operations beyond the cutoff are purged, those within it are
+   applied. If the operator aborts the eviction instead, call `crdt.releaseAuthor(target)`.)
 3. Coordinator: cutoff[target] = max(replies)     (waits for every active member)
 4. Coordinator -> all: membership(epoch+1, target removed, evictedMembers[target] = cutoff)
    Eviction is now PENDING. Fencing by cutoff is in force.
@@ -1352,6 +1356,8 @@ Operator: Exorcise(target)
    Until then: Graveyard shows "exorcism pending"; coordinator re-sends backfill requests;
    non-confirming members are shown as stalled for a MANUAL Exorcise (never automatic).
 ```
+
+Why the hold in step 2: the cutoff is the max of the replies. A survivor that applied one more of a LIVE target's operations after replying would keep an operation that every other survivor fences, and the survivors would diverge permanently (the target is gone, so nobody can repair it). The hold freezes each survivor at exactly the seq it replied with. A stalled target (the demo) sends nothing, so the hold only matters for a target that is still writing.
 
 Why the barrier: without step 5/6 a survivor that missed some of target's ops below the cutoff would keep a permanent gap, because the target is gone and its ops can no longer be fetched from it. While the eviction is pending the stable frontier stays safe: `Frontier[target] = min over survivors of ack[target]`, so an un-backfilled survivor holds it back and nothing of target's is reclaimed too early. The coordinator's retries and timers live in the coordinator, not in the kernel.
 
