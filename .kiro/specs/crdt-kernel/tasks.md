@@ -916,7 +916,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 58. **PBT - Evicted-Author Fencing (Property 11)** (KER-58)
+- [x] 58. **PBT - Evicted-Author Fencing (Property 11)** (KER-58)
+  - **Status note**: done in `kernel/tests/fencing.properties.test.ts` (6 properties, seeded, 150 runs; also run at 400 runs with 3 other seeds). Real scenario: history, eviction with the cutoff taken as the max of the survivors' contiguous seq, reconcile, then everything the stalled victim wrote is delivered shuffled and duplicated. Beyond the cutoff or an unknown author: always `fenced` and the state, VV, log, buffer and Lamport clock are unchanged; at or below: never fenced; `epoch` has no effect; a view installed while ops wait in the buffer purges exactly those beyond the cutoff.
   - Generate edit operations from evicted and unknown authors, some at or below and some beyond the cutoff, with arbitrary `epoch` values
   - Verify all are rejected, not applied
   - Verify state and VV unchanged
@@ -928,7 +929,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 59. **PBT - Stable Frontier Monotonicity (Property 12)** (KER-59)
+- [x] 59. **PBT - Stable Frontier Monotonicity (Property 12)** (KER-59)
+  - **Status note**: done in `kernel/tests/frontier.properties.test.ts` (6 properties with KER-60, 150 runs): the frontier is exactly the component-wise minimum, never regresses as history grows, a replica keeps the largest frontier it was told (an older one arriving late changes nothing), an un-acked member holds everything back, and removing a member can only raise it.
   - Generate VV acknowledgments and membership updates
   - Compute frontier for each step
   - Verify frontier advances monotonically
@@ -940,7 +942,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 60. **PBT - Causally Stable Operation Identification (Property 13)** (KER-60)
+- [x] 60. **PBT - Causally Stable Operation Identification (Property 13)** (KER-60)
+  - **Status note**: done in `kernel/tests/frontier.properties.test.ts`: every operation at or below the frontier is applied by every active member, and stability is closed under causality (the anchor or target and all earlier operations of the same author are stable too).
   - Generate operations and compute frontier
   - Verify ops at/below frontier are stable
   - Verify all causal predecessors are also stable
@@ -952,7 +955,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-042
   - **Validation**: Property test passes
 
-- [ ] 61. **PBT - Stage 1 GC Correctness (Property 14)** (KER-61)
+- [x] 61. **PBT - Stage 1 GC Correctness (Property 14)** (KER-61)
+  - **Status note**: done in `kernel/tests/gc.properties.test.ts` (10 properties, 150 runs). The same generated history runs on a set with GC and a control set without. Visible sequence, structure (order, anchors, Lamport times, deleted flags), VVs and log order are identical; a payload is reclaimed only when every member already has the element deleted (checked part-way, mid-history and at the end); after a full sync every tombstone is reclaimed and none removed; the log holds no payload for a reclaimed element; a fresh replica replaying the REDACTED log in any order, or a random mix of redacted and full copies, converges; GC is idempotent; edits after GC (including anchored on reclaimed tombstones) still converge.
   - Generate delete operations and frontier updates
   - Apply GC
   - Verify payload reclaimed but anchor remains

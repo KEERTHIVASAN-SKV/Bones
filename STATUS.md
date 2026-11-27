@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 501 tests pass; line coverage of `kernel/src` only is 99.08% (`crdt.ts` 99.02%, `rga.ts` 98.63%, `utils.ts` 97.95%, `events.ts` 97.5%; `buffer.ts`, `gc.ts`, `membership.ts`, `oplog.ts`, `vv.ts`, `index.ts` 100%). `src/types.ts` is excluded because it has no runtime code.
+Last verified run: typecheck, build, lint and purity clean; 523 tests pass; line coverage of `kernel/src` only is 99.08% (`crdt.ts` 99.02%, `rga.ts` 98.63%, `utils.ts` 97.95%, `events.ts` 97.5%; `buffer.ts`, `gc.ts`, `membership.ts`, `oplog.ts`, `vv.ts`, `index.ts` 100%). `src/types.ts` is excluded because it has no runtime code.
 
 ## Cursed Checklist (`apps/cursed-checklist`, KER-080)
 
@@ -72,6 +72,7 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 | KER-024, KER-025 frontier and causal stability | done (`computeStableFrontier`, `isCausallyStable` in `vv.ts`, 25 tests, 11 mutants caught) |
 | KER-026 GC stats | done: `buildGCStats` and `CRDT.getGCStats()` |
 | KER-033 events and membership updates | **partly done**, not ticked: `membershipChanged`, `gcEvent`, `sequenceChanged`; `updateMembership(view)` returns whether it was installed; `updateStableFrontier(frontier, epoch)` applies the frontier only at the current epoch (requirement 11.8), merges it monotonically, runs GC and redacts the log. Open: `snapshot()` and `rejoinFromSnapshot` |
+| Gate A property tests (KER-58 to KER-61) | done: 22 properties in `frontier.properties.test.ts` (6), `gc.properties.test.ts` (10) and `fencing.properties.test.ts` (6), seeded, 150 runs each; also run at 400 runs with seeds 777, 424242 and 99, all passing. Frontier safety (stable means every member applied it, closed under causality, never regresses, an un-acked member holds it back). GC safety (same history with and without GC gives identical visible sequence, structure, VVs and log order; a payload is reclaimed only when every member has the element deleted; a fresh replica replaying the REDACTED log, or a mix of redacted and full copies, converges). Fencing (beyond the cutoff or unknown author: always fenced and nothing changes; at or below: never fenced; `epoch` has no effect). 21 of 22 deliberate bugs in `gc.ts`, `vv.ts`, `oplog.ts` and `crdt.ts` are caught by these property tests alone; the 22nd (reclaim a live element when the bookkeeping is corrupt) is caught by a unit test. KER-57 (epoch monotonicity) is covered by unit tests only |
 | KER-027 to KER-029 snapshots and rejoin | not started. Next: snapshot creation, validating serialization, `CRDT.fromSnapshot`, then the property tests |
 
 ## Source of truth
@@ -111,6 +112,8 @@ The hooks run from the repo root (confirmed: the Stop hook found `scripts/` and 
 - README does not mention Algorithm 4 or the `/apps` folders.
 - `npm audit` reports advisories in dev dependencies (not fixed; no `--force`).
 - `BONES_NEXT_STEPS.md` (the plan the schedule comes from) is not in the repo.
+- Eviction prepare phase (requirements.md 10.3, "each active member stops applying new ops from target"): the kernel has no hook for it. If a survivor applies an operation of the target that lies beyond the FINAL cutoff between replying to `evict-prepare` and installing the new view, it will hold an operation the other survivors fence, and they diverge. The property tests install the view before delivering anything beyond the cutoff. The coordinator and the app must hold back the target's new operations from `applyOp` from `evict-prepare` until the view is installed; this is part of the coordinator task (DA-3, DA-4 in `.kiro/specs/demo-apps/tasks.md`), not yet built.
+- A replica restored from a snapshot starts a fresh operation log (design.md Algorithm 7), so it can only answer a hello with operations after the snapshot point. Snapshots are not built yet; this will be a README limitation.
 
 ## Submission checklist (Devpost / Skeleton Crew)
 
