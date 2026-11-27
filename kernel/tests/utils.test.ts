@@ -335,4 +335,17 @@ describe('estimatePayloadSize', () => {
     expect(estimatePayloadSize('abc')).toBe(5);
     expect(estimatePayloadSize({ a: 1 })).toBe(7);
   });
+
+  it('returns 0 instead of throwing for values JSON.stringify rejects (a cycle, a BigInt)', () => {
+    // GC calls this while reclaiming; a throw here would abort a whole GC pass half-way.
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(estimatePayloadSize(cycle)).toBe(0);
+    expect(estimatePayloadSize(10n)).toBe(0);
+    expect(estimatePayloadSize({ nested: { big: 1n } })).toBe(0);
+  });
+
+  it('returns 0 for a value whose toJSON throws', () => {
+    expect(estimatePayloadSize({ toJSON: () => { throw new Error('nope'); } })).toBe(0);
+  });
 });

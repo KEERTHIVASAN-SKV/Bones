@@ -53,6 +53,7 @@ import {
   membershipFromJSON,
   serializeMembership,
   deserializeMembership,
+  assertValidVersionVector,
   computeStableFrontier,
   isCausallyStable,
   performStage1GC,
@@ -96,6 +97,34 @@ describe('public API (index.ts) exposes the RGA', () => {
     ]) {
       expect(typeof fn).toBe('function');
     }
+  });
+
+  it('the CRDT class exposes membership, frontier and GC through the public entry point', () => {
+    expect(typeof assertValidVersionVector).toBe('function');
+    const members = createMembership(['a.0', 'b.0']);
+    const a = new CRDT<string>('a.0', members);
+    const b = new CRDT<string>('b.0', members);
+    const x = a.insert(undefined, 'payload');
+    b.applyOp(x);
+    const d = a.delete(x.id);
+    b.applyOp(d);
+
+    const acks = new Map([['a.0', a.getVV()], ['b.0', b.getVV()]]);
+    const frontier = computeStableFrontier(acks, members.activeMembers);
+    let gcEvents = 0;
+    a.on('gcEvent', () => {
+      gcEvents++;
+    });
+    expect(a.updateStableFrontier(frontier, a.getMembershipView().epoch)).toBe(true);
+    expect(gcEvents).toBe(1);
+    expect(a.isCausallyStable(d.id)).toBe(true);
+    expect(a.getGCStats()).toMatchObject({ tombstoneCount: 1, payloadsReclaimed: 1 });
+    expect(a.getGCStats().bytesSaved).toBeGreaterThan(0);
+
+    // evict b: a view with a higher epoch installs, and b's later operations are fenced
+    expect(a.updateMembership(removeReplica(members, 'b.0', b.getVV().get('b.0') ?? 0))).toBe(true);
+    expect(a.getMembershipView().epoch).toBe(1);
+    expect(a.applyOp(b.insert(undefined, 'too late')).status).toBe('fenced');
   });
 
   it('exports GC: frontier from acks, stability check, reclaim a payload, redact the log, stats', () => {

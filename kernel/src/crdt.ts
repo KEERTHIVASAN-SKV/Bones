@@ -5,20 +5,41 @@
  * clock. Local operations and remote operations go through the SAME pipeline (`applyOp`), so a
  * replica never has a second, subtly different way of applying an operation.
  *
- * Implemented so far: local insert/delete, the applyOp pipeline (validate, fence [stub],
- * suppress duplicates, buffer, apply, drain), the queries below, and events.
- * Not implemented yet (separate tasks): membership and real fencing, stable frontier and GC,
- * snapshots and rejoin.
+ * Implemented: local insert/delete, the applyOp pipeline (validate, fence by author + cutoff,
+ * suppress duplicates, buffer, apply, drain), membership (`updateMembership`), the stable
+ * frontier and Stage 1 GC with log redaction (`updateStableFrontier`), the queries below, and
+ * events. Not implemented yet (separate task): snapshots and rejoin.
+ *
+ * Open mode: a replica that was never given a membership view accepts operations from every
+ * author, so a standalone replica works without a coordinator. Fencing starts when the first
+ * view is installed (constructor argument or `updateMembership`).
  *
  * Kernel purity: no clocks, randomness or I/O; the only "time" is the Lamport clock.
  */
 
-import type { Element, OpIdKey, Operation, OperationBuffer, VersionVector } from './types.js';
-import { assertValidOperation, isValidReplicaId, MAX_LAMPORT, parseOpId } from './utils.js';
-import { advanceContiguous } from './vv.js';
-import { bufferOp, createOperationBuffer, takeReadyFromBuffer } from './buffer.js';
-import { appendOp, createOpLog, getAllOps } from './oplog.js';
+import type {
+  Element,
+  GCStats,
+  MembershipView,
+  OpIdKey,
+  Operation,
+  OperationBuffer,
+  VersionVector,
+} from './types.js';
+import {
+  assertValidOperation,
+  assertValidVersionVector,
+  isValidReplicaId,
+  MAX_LAMPORT,
+  mergeVersionVectors,
+  parseOpId,
+} from './utils.js';
+import { advanceContiguous, isCausallyStable } from './vv.js';
+import { bufferOp, createOperationBuffer, purgeFencedBuffered, takeReadyFromBuffer } from './buffer.js';
+import { appendOp, createOpLog, getAllOps, redactReclaimedPayloads } from './oplog.js';
 import type { OpLog } from './oplog.js';
+import { applyMembershipView, assertValidMembershipView, getMembership, isFenced as isFencedByView } from './membership.js';
+import { buildGCStats, performStage1GC } from './gc.js';
 import { EventEmitter } from './events.js';
 import type { EventCallback, EventType } from './events.js';
 import {
@@ -39,7 +60,9 @@ export interface ApplyResult {
    * - `applied`: the operation was applied (and possibly unblocked buffered ones)
    * - `buffered`: a dependency is missing; held back, never dropped, VV not advanced
    * - `duplicate`: already applied or already buffered; nothing changed
-   * - `fenced`: rejected because its author is not allowed to write (membership; not enforced yet)
+   * - `fenced`: rejected because its author is not an active member and the operation is beyond
+   *   the author's cutoff (or the author is unknown). Nothing at all changed: not the version
+   *   vector, the log, the buffer nor the Lamport clock.
    */
   status: 'applied' | 'buffered' | 'duplicate' | 'fenced';
   /** True if the visible/structural state changed (false e.g. for a no-op delete). */
@@ -66,22 +89,29 @@ export class CRDT<T = unknown> {
   private readonly events = new EventEmitter();
   private lamportClock = 0;
 
-  /**
-   * Fencing hook. Stub: accepts everything until membership exists (call site is final).
-   * Real rule (requirements.md 10.0): accept if the author is active, or evicted with
-   * `seq <= cutoff`. Never consults `op.epoch`.
-   */
-  private readonly isFenced: (op: Operation<T>) => boolean = () => false;
+  /** The membership view in force; undefined = open mode (no view installed yet: accept every author). */
+  private membership: MembershipView | undefined;
+  /** The stable frontier this replica has been told about; only ever grows. */
+  private frontier: VersionVector = new Map();
+  /** Cumulative estimated payload bytes freed by Stage 1 GC (each payload counted once). */
+  private bytesSaved = 0;
 
   /**
    * @param replicaId - Unique ID of this replica; letters, digits, `_`, `-` and `.` only
-   * @throws TypeError if the ID is empty or contains characters that cannot appear in an Op ID
+   * @param initialMembership - Optional first membership view (copied). Without it the replica
+   *   starts in open mode and accepts every author until `updateMembership` installs a view.
+   * @throws TypeError if the ID is empty or contains characters that cannot appear in an Op ID,
+   *   or if the membership view is malformed
    */
-  constructor(replicaId: string) {
+  constructor(replicaId: string, initialMembership?: MembershipView) {
     if (!isValidReplicaId(replicaId)) {
       throw new TypeError(`CRDT: invalid replicaId "${replicaId}" (use letters, digits, "_", "-" and ".")`);
     }
     this.replicaId = replicaId;
+    if (initialMembership !== undefined) {
+      assertValidMembershipView(initialMembership);
+      this.membership = getMembership(initialMembership);
+    }
   }
 
   // ==================== Local operations ====================
@@ -94,12 +124,14 @@ export class CRDT<T = unknown> {
    * @param anchorId - Element to insert after; undefined = start of the sequence
    * @param value - Payload
    * @returns The operation to broadcast to other replicas
-   * @throws RangeError if `anchorId` is not an element of this replica (nothing is changed)
+   * @throws RangeError if `anchorId` is not an element of this replica, or if this replica was
+   *   evicted and its next sequence number is beyond its cutoff (nothing is changed)
    */
   insert(anchorId: OpIdKey | undefined, value: T): Operation<T> {
     if (anchorId !== undefined && !this.rga.elements.has(anchorId)) {
       throw new RangeError(`insert: unknown anchor ${anchorId}`);
     }
+    this.assertMayWrite();
     this.assertClockHasRoom();
     const { operation } = insert<T>({
       replicaId: this.replicaId,
@@ -107,7 +139,7 @@ export class CRDT<T = unknown> {
       value,
       clock: this.lamportClock,
       seq: this.vv.get(this.replicaId) ?? 0,
-      epoch: 0, // membership epoch: diagnostic only, wired up with membership
+      epoch: this.currentEpoch(), // diagnostic only, never used for fencing
     });
     this.applyLocal(operation);
     return operation;
@@ -119,19 +151,21 @@ export class CRDT<T = unknown> {
    *
    * @param elementId - Element to delete
    * @returns The operation to broadcast to other replicas
-   * @throws RangeError if `elementId` is not an element of this replica (nothing is changed)
+   * @throws RangeError if `elementId` is not an element of this replica, or if this replica was
+   *   evicted and its next sequence number is beyond its cutoff (nothing is changed)
    */
   delete(elementId: OpIdKey): Operation<T> {
     if (!this.rga.elements.has(elementId)) {
       throw new RangeError(`delete: unknown element ${elementId}`);
     }
+    this.assertMayWrite();
     this.assertClockHasRoom();
     const { operation } = delete_({
       replicaId: this.replicaId,
       target: elementId,
       clock: this.lamportClock,
       seq: this.vv.get(this.replicaId) ?? 0,
-      epoch: 0,
+      epoch: this.currentEpoch(),
     }) as { operation: Operation<T> };
     this.applyLocal(operation);
     return operation;
@@ -148,8 +182,40 @@ export class CRDT<T = unknown> {
     }
   }
 
+  /** The epoch of the view in force (0 in open mode). Put on local operations for diagnostics only. */
+  private currentEpoch(): number {
+    return this.membership?.epoch ?? 0;
+  }
+
+  /**
+   * A replica that has been told it was evicted may only create operations up to its cutoff:
+   * survivors would fence the rest, so creating them would only produce operations that can
+   * never be accepted. A replica that is not in the view at all is just joining and may write.
+   * Called before anything is created, so a refusal consumes no sequence number.
+   */
+  private assertMayWrite(): void {
+    const cutoff = this.membership?.evictedMembers.get(this.replicaId);
+    if (cutoff === undefined) return;
+    if ((this.vv.get(this.replicaId) ?? 0) + 1 > cutoff) {
+      throw new RangeError(
+        `CRDT: replica "${this.replicaId}" was evicted (cutoff ${cutoff}); rejoin from a snapshot with a new replica ID`
+      );
+    }
+  }
+
+  /**
+   * Edit-operation fencing (requirements.md 10.0): by AUTHOR and CUTOFF, read from the Op ID.
+   * `op.epoch` is never consulted. Open mode (no view yet) fences nothing.
+   */
+  private isFenced(op: Operation<T>): boolean {
+    if (this.membership === undefined) return false;
+    const parsed = parseOpId(op.id);
+    if (parsed === null) return true; // cannot happen after assertValidOperation; fail closed
+    return isFencedByView(this.membership, parsed.replicaId, parsed.seq);
+  }
+
   private applyLocal(operation: Operation<T>): void {
-    const result = this.applyOp(operation);
+    const result = this.pipeline(operation, true);
     if (result.status !== 'applied') {
       // Cannot happen: the anchor/target exists and seq = VV + 1. Fail loudly, never silently.
       throw new Error(`CRDT: local operation ${operation.id} was ${result.status}`);
@@ -161,7 +227,7 @@ export class CRDT<T = unknown> {
   /**
    * Apply an operation from any replica (design.md Algorithm 3):
    * 1. validate its structure (`assertValidOperation`)
-   * 2. fencing (stub)
+   * 2. fencing by author + cutoff (membership); a fenced operation changes nothing
    * 3. suppress duplicates: `seq <= VV[author]`, or already buffered
    * 4. if not ready (earlier seq, anchor or target missing): buffer it, never drop it
    * 5. apply it, log it, advance the VV (also for no-ops), absorb its Lamport time
@@ -174,10 +240,19 @@ export class CRDT<T = unknown> {
    * @throws TypeError if the operation is malformed (state is untouched)
    */
   applyOp(op: Operation<T>): ApplyResult {
+    return this.pipeline(op, false);
+  }
+
+  /**
+   * The one pipeline for local and remote operations. `local` is true only for an operation this
+   * replica has just created itself: it skips the author fence (a replica that has not been added
+   * to the view yet may still write; `assertMayWrite` already stopped an evicted one).
+   */
+  private pipeline(op: Operation<T>, local: boolean): ApplyResult {
     assertValidOperation(op);
     const parsed = parseOpId(op.id) as { replicaId: string; seq: number };
 
-    if (this.isFenced(op)) {
+    if (!local && this.isFenced(op)) {
       return { status: 'fenced', changed: false, unblocked: [], fenced: [] };
     }
 
@@ -318,6 +393,114 @@ export class CRDT<T = unknown> {
    */
   isElementDeleted(elementId: OpIdKey): boolean {
     return isElementDeleted(this.rga, elementId);
+  }
+
+  // ==================== Membership, frontier and GC ====================
+
+  /**
+   * The membership view in force. In open mode (no view installed yet) this replica is its own
+   * only member at epoch 0.
+   *
+   * @returns An independent copy: changing it never changes this replica
+   */
+  getMembershipView(): MembershipView {
+    if (this.membership === undefined) {
+      return { activeMembers: new Set([this.replicaId]), evictedMembers: new Map(), epoch: 0 };
+    }
+    return getMembership(this.membership);
+  }
+
+  /**
+   * Install a membership view published by the coordinator (KER-033).
+   *
+   * The first view is always installed (even at epoch 0): from then on the replica fences by
+   * author + cutoff. After that a view replaces the current one only if its epoch is greater and
+   * it does not contradict what this replica knows (an evicted replica stays evicted with the
+   * same cutoff; see `applyMembershipView`). Installing a view then REJECTS every buffered
+   * operation that is now fenced (they are removed from the buffer), emits `membershipChanged`,
+   * and never un-applies an operation that was already applied.
+   *
+   * @param newView - The published view (validated; copied)
+   * @returns true if it was installed, false if it was ignored (old, equal or contradictory)
+   * @throws TypeError if the view is malformed (the replica is unchanged)
+   */
+  updateMembership(newView: MembershipView): boolean {
+    assertValidMembershipView(newView);
+    let next: MembershipView;
+    if (this.membership === undefined) {
+      next = getMembership(newView);
+    } else {
+      const result = applyMembershipView(this.membership, newView);
+      if (!result.applied) return false;
+      next = result.view;
+    }
+    this.membership = next;
+    purgeFencedBuffered(this.buffer, (op) => this.isFenced(op));
+    this.events.emit('membershipChanged');
+    return true;
+  }
+
+  /**
+   * Tell this replica the stable frontier, then reclaim every payload that became safe to
+   * reclaim (KER-033; requirements.md 11.8 and 12; design.md Algorithm 6 and decision D-A).
+   *
+   * The frontier is applied only if `epoch` equals this replica's CURRENT epoch: a frontier
+   * computed for another membership view must not authorize reclamation. It is merged into the
+   * frontier already held by taking the larger value per replica, so the frontier never moves
+   * backwards. Reclaiming drops the payload from the sequence AND from the matching insert in
+   * the operation log, then emits `gcEvent` once if anything was reclaimed. It changes neither
+   * the version vector, the Lamport clock nor the visible sequence.
+   *
+   * Safe only if the frontier was computed from honest acknowledgements (requirements.md 11).
+   *
+   * @param frontier - The coordinator's stable frontier (validated; copied)
+   * @param epoch - The membership epoch the frontier was computed for
+   * @returns true if applied; false if ignored because of a stale or future (or malformed) epoch
+   * @throws TypeError if the frontier is not a well-formed version vector (the replica is unchanged)
+   */
+  updateStableFrontier(frontier: VersionVector, epoch: number): boolean {
+    assertValidVersionVector(frontier);
+    if (epoch !== this.currentEpoch()) return false;
+
+    this.frontier = mergeVersionVectors(this.frontier, frontier);
+    const { reclaimed, bytesReclaimed } = performStage1GC(this.rga, this.frontier);
+    if (reclaimed.length > 0) {
+      redactReclaimedPayloads(this.log, reclaimed);
+      this.bytesSaved += bytesReclaimed;
+      this.events.emit('gcEvent');
+    }
+    return true;
+  }
+
+  /**
+   * Whether an operation is at or below the stable frontier this replica holds (every active
+   * member has applied it).
+   *
+   * @param opId - The operation's ID
+   * @returns true if causally stable; false if not, or if the ID is malformed
+   */
+  isCausallyStable(opId: OpIdKey): boolean {
+    return isCausallyStable(opId, this.frontier);
+  }
+
+  /**
+   * The stable frontier this replica holds (starts empty; only grows).
+   *
+   * @returns A copy
+   */
+  getStableFrontier(): VersionVector {
+    return new Map(this.frontier);
+  }
+
+  /**
+   * Statistics for the Graveyard panel. `tombstoneCount` includes tombstones whose payload was
+   * reclaimed: Stage 1 keeps the structure, so that count never goes down. `bytesSaved` counts
+   * each reclaimed payload once (the sequence and the log share one object, and GC drops both).
+   *
+   * @returns A fresh GCStats
+   */
+  getGCStats(): GCStats {
+    return buildGCStats(this.rga, this.bytesSaved, this.membership?.evictedMembers.size ?? 0, this.frontier);
   }
 
   // ==================== Events ====================

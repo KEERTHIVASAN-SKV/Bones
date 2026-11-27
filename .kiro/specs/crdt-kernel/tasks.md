@@ -439,7 +439,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-023
   - **Validation**: Unit test: op at various positions relative to frontier
 
-- [ ] 27. **GC Statistics and Diagnostics** (KER-026)
+- [x] 27. **GC Statistics and Diagnostics** (KER-026)
+  - **Status note**: done: `buildGCStats` in `gc.ts` and `CRDT.getGCStats()`. `bytesSaved` counts each reclaimed payload once (the sequence and the log share one object and GC drops both); `tombstoneCount` includes tombstones whose payload was reclaimed, so it never goes down.
   - Implement `getGCStats(...)` returning `GCStats` (types.ts):
     - `tombstoneCount`: deleted elements currently in the structure
     - `payloadsReclaimed`: how many of them are retained anchors (payload reclaimed)
@@ -506,7 +507,7 @@ Applications (KER-078 to KER-080)
 ### Phase 3: CRDT Orchestrator
 
 - [ ] 31. **CRDT Class Initialization and State Management** (KER-030)
-  - **Status note**: partly done in `kernel/src/crdt.ts`: the class initializes with a validated replicaId and holds the RGA, VV, OpLog, dependency buffer, Lamport clock and event emitter. **Open** (so the box stays unticked): membership state, GC state, and snapshot-based initialization (`CRDT.fromSnapshot`).
+  - **Status note**: partly done in `kernel/src/crdt.ts`: replicaId, RGA, VV, OpLog, dependency buffer, Lamport clock, membership (optional constructor argument; open mode without one), stable frontier and GC state exist. **Open** (so the box stays unticked): snapshot-based initialization (`CRDT.fromSnapshot`, KER-027 to KER-029).
   - Create `src/crdt.ts` with main CRDT class
   - Initialize RGA, VV, OpLog, Membership, GC state
   - Track current sequence number for this replica
@@ -520,8 +521,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-006, KER-011, KER-015, KER-018, KER-028
   - **Validation**: Unit test: create CRDT → verify initial state
 
-- [ ] 32. **CRDT Core API (insert, delete, applyOp)** (KER-031)
-  - **Status note**: partly done: `insert`, `delete` and `applyOp` work and are mutation-checked and property-tested (validation, duplicate suppression, buffering on seq gap / missing anchor / missing target, iterative unblocking, no-op ops advance the VV, Lamport absorption, `sequenceChanged` at most once per call; Lamport times limited to `MAX_LAMPORT`). `applyOp` returns an `ApplyResult` instead of `void`. **Open**: real fencing by author + cutoff (the fence check is a stub that accepts everything until membership exists), so the criterion "ops from non-active authors beyond their cutoff are rejected" is not met yet.
+- [x] 32. **CRDT Core API (insert, delete, applyOp)** (KER-031)
+  - **Status note**: done: `insert`, `delete`, `applyOp` with real fencing by author + cutoff (never `op.epoch`); a fenced operation changes nothing (VV, log, buffer, Lamport clock); a buffered op that becomes fenced is purged by `updateMembership`. A replica that was never given a view accepts every author (open mode). Local operations skip the author fence, and an evicted replica refuses to create operations beyond its own cutoff (`RangeError`, no sequence number consumed). Mutation-checked (20 mutants earlier, 38 more for membership, frontier and GC).
   - Implement public methods:
     - `insert(anchorId, value)` → Operation
     - `delete(elementId)` → Operation
@@ -540,8 +541,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-006, KER-007, KER-013, KER-020
   - **Validation**: Unit test: insert/delete/applyOp with various scenarios; verify state consistency
 
-- [ ] 33. **CRDT Query Methods** (KER-032)
-  - **Status note**: partly done: `getSequence`, `getVV`, `isElementDeleted`, `getAllElements` (tombstones) and `opsSince` (catch-up), plus `getOps`, `getPendingCount`, `getLamportClock`, return copies and are tested. **Open**: `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats` (they need membership, frontier and GC).
+- [x] 33. **CRDT Query Methods** (KER-032)
+  - **Status note**: done: `getSequence`, `getAllElements`, `getVV`, `getOps`, `opsSince`, `getPendingCount`, `getLamportClock`, `isElementDeleted`, plus `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats`. All return copies.
   - Implement public methods:
     - `getSequence()` → Element[]
     - `getVV()` → VersionVector
@@ -561,6 +562,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Unit test: insert/delete → query → verify accuracy
 
 - [ ] 34. **CRDT Events and Membership Updates** (KER-033)
+  - **Status note**: partly done: `on`/`off`, `sequenceChanged`, `membershipChanged` and `gcEvent` work. `updateMembership(view)` returns whether the view was installed (ignores a non-increasing or contradictory epoch, purges buffered ops that are now fenced). `updateStableFrontier(frontier, epoch)` takes the epoch (requirement 11.8: applied only at the current epoch), merges monotonically, runs Stage 1 GC and redacts the log (D-A). **Open** (box stays unticked): `snapshot()` and `rejoinFromSnapshot` (KER-027 to KER-029). Event payloads are not implemented: the listeners take no arguments.
   - Implement event system:
     - `on(event, callback)`: register listener
     - `off(event, callback)`: unregister listener

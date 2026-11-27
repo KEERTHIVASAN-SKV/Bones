@@ -214,6 +214,28 @@ export function deserializeVersionVector(obj: Record<string, number>): VersionVe
 }
 
 /**
+ * Check that a value is a well-formed version vector in its in-memory form: a Map from valid
+ * replica IDs to non-negative safe integers. Use it on a vector that did not come through
+ * {@link deserializeVersionVector} (a frontier or a snapshot field handed in by the application).
+ * An entry of 0 is allowed; it means the same as a missing entry.
+ *
+ * @param value - Candidate vector
+ * @throws TypeError describing the first problem found
+ */
+export function assertValidVersionVector(value: unknown): asserts value is VersionVector {
+  if (!(value instanceof Map)) throw new TypeError('version vector: expected a Map');
+  for (const [replicaId, seq] of value) {
+    if (typeof replicaId !== 'string' || !isValidReplicaId(replicaId)) {
+      throw new TypeError(`version vector: invalid replica ID ${String(replicaId)}`);
+    }
+    // Number.isSafeInteger is false for anything that is not a number (string, BigInt, null, ...)
+    if (!Number.isSafeInteger(seq) || seq < 0) {
+      throw new TypeError(`version vector: entry for "${replicaId}" must be a non-negative integer, got ${String(seq)}`);
+    }
+  }
+}
+
+/**
  * Check if replicaId is a valid identifier.
  *
  * Valid format: non-empty string of alphanumerics, hyphens, underscores and dots, which
@@ -416,10 +438,16 @@ export function buildOpIndex<T>(elements: readonly Element<T>[]): Map<OpIdKey, n
  * Deterministic; used only for GC statistics, never for algorithm decisions.
  *
  * @param value - Payload (JSON-compatible)
- * @returns 0 for undefined/null/non-serializable values, otherwise the JSON length
+ * @returns 0 for undefined/null/non-serializable values (a function, a cycle, a BigInt, a
+ *   `toJSON` that throws), otherwise the JSON length. It never throws: GC calls it in the middle
+ *   of reclaiming, and a throw there would abort the whole pass.
  */
 export function estimatePayloadSize(value: unknown): number {
   if (value === undefined || value === null) return 0;
-  const json = JSON.stringify(value);
-  return json === undefined ? 0 : json.length;
+  try {
+    const json = JSON.stringify(value);
+    return json === undefined ? 0 : json.length;
+  } catch {
+    return 0;
+  }
 }

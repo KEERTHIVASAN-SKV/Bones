@@ -31,6 +31,7 @@ export {
   isEmptyVersionVector,
   serializeVersionVector,
   deserializeVersionVector,
+  assertValidVersionVector,
   isValidReplicaId,
   isValidSequence,
   stableStringify,

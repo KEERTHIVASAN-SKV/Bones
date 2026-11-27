@@ -17,7 +17,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 230 tests pass; line coverage of `kernel/src` only is 98.37% (`crdt.ts` 97.05%, `rga.ts` 98.63%, `utils.ts` 97.79%, `events.ts` 97.5%, `buffer.ts`, `oplog.ts`, `vv.ts` 100%). `src/types.ts` is excluded because it has no runtime code. Earlier figures also counted test and config files and are superseded.
+Last verified run: typecheck, build, lint and purity clean; 501 tests pass; line coverage of `kernel/src` only is 99.08% (`crdt.ts` 99.02%, `rga.ts` 98.63%, `utils.ts` 97.95%, `events.ts` 97.5%; `buffer.ts`, `gc.ts`, `membership.ts`, `oplog.ts`, `vv.ts`, `index.ts` 100%). `src/types.ts` is excluded because it has no runtime code.
 
 ## Cursed Checklist (`apps/cursed-checklist`, KER-080)
 
@@ -61,17 +61,18 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 | KER-017 deterministic replay | done (`replayLog`, plus `cloneRGA` in `rga.ts`; split replay equals full replay) |
 | dependency buffer (`kernel/src/buffer.ts`) | done: indexed unblocking, fence purge, capped `missing` cache. A 5,000-op reverse chain needs <= 3n readiness checks. 12 mutants caught |
 | `assertValidOperation` (`utils.ts`) | done: validates operations that never passed `deserializeOp`; `CRDT.applyOp` uses it. 8 mutants caught |
-| KER-030 CRDT init | **partly done**, not ticked: replicaId, RGA, VV, log, buffer, clock exist. Open: membership state, GC state, snapshot init |
-| KER-031 insert / delete / applyOp | **partly done**, not ticked: pipeline, buffering, no-ops, Lamport absorption, events work (18 + 7 property tests, 20 mutants caught). Open: real fencing (stub accepts everything) |
-| KER-032 query methods | **partly done**, not ticked: `getSequence`, `getVV`, `isElementDeleted`, `getAllElements` (tombstones), `opsSince` (catch-up) plus `getOps`, `getPendingCount`, `getLamportClock`. Open: membership view, causal stability, frontier, GC stats |
+| KER-030 CRDT init | **partly done**, not ticked: replicaId, RGA, VV, log, buffer, clock, membership (optional constructor view; open mode without one), frontier and GC state exist. Open: snapshot-based init (`CRDT.fromSnapshot`, KER-027 to KER-029) |
+| KER-031 insert / delete / applyOp | done: pipeline, buffering, no-ops, Lamport absorption, events, and real fencing by author + cutoff (never `op.epoch`). A fenced operation changes nothing. Local operations skip the author fence; an evicted replica refuses to create operations beyond its own cutoff. 38 mutants for membership, frontier and GC caught (20 earlier for the pipeline) |
+| KER-032 query methods | done: `getSequence`, `getAllElements`, `getVV`, `getOps`, `opsSince`, `getPendingCount`, `getLamportClock`, `isElementDeleted`, `getMembershipView`, `isCausallyStable`, `getStableFrontier`, `getGCStats` (all return copies) |
 | F1 Lamport limit | done: `MAX_LAMPORT` = 2^48; `assertValidOperation` rejects larger Lamport times (and unsafe epochs); a replica at the limit refuses local operations. Reproduced first: a forged `2**53` froze the clock (`clock + 1 === clock`) |
 | F3 catch-up | done: `computeVVDifference`, `CRDT.opsSince`; sync property tests. Finding: a peer holding buffered operations can only send what it has applied, so catch-up can take more than one round; repeating the exchange converges |
 | F4 tombstones | done: `CRDT.getAllElements()` returns every element including deleted ones, as copies |
-| KER-018 to KER-022 membership, epochs, fencing, cutoffs, serialization | done (`kernel/src/membership.ts`, 108 tests incl. the public entry point). Edit ops are fenced by author + cutoff, control messages by epoch; `applyMembershipView` ignores a non-increasing epoch and ignores a higher-epoch view that contradicts known state. 42 mutants, all caught. Not yet wired into `CRDT` (the `isFenced` stub still accepts everything until KER-031/033) |
-| KER-023 Stage 1 GC + decision D-A (log redaction) | done (`kernel/src/gc.ts`, `redactReclaimedPayloads` in `oplog.ts`; 29 + 9 tests; 18 + 7 mutants caught). Reclaims the payload when ANY delete of the element is stable. The tombstone count never goes down (structure is kept). The RGA and the log share one payload object, so `bytesSaved` counts each reclaimed payload once, and it is only true because GC clears both. Not yet called from `CRDT` |
+| KER-018 to KER-022 membership, epochs, fencing, cutoffs, serialization | done (`kernel/src/membership.ts`, 108 tests incl. the public entry point). Edit ops are fenced by author + cutoff, control messages by epoch; `applyMembershipView` ignores a non-increasing epoch and ignores a higher-epoch view that contradicts known state. 42 mutants, all caught. Wired into `CRDT` (author fence in `applyOp`, `updateMembership`) |
+| KER-023 Stage 1 GC + decision D-A (log redaction) | done (`kernel/src/gc.ts`, `redactReclaimedPayloads` in `oplog.ts`; 29 + 9 tests; 18 + 7 mutants caught). Reclaims the payload when ANY delete of the element is stable. The tombstone count never goes down (structure is kept). The RGA and the log share one payload object, so `bytesSaved` counts each reclaimed payload once, and it is only true because GC clears both. Called from `CRDT.updateStableFrontier` (tests in `crdt.gc.test.ts`) |
 | KER-024, KER-025 frontier and causal stability | done (`computeStableFrontier`, `isCausallyStable` in `vv.ts`, 25 tests, 11 mutants caught) |
-| KER-026 GC stats | partly done: `buildGCStats` exists; `CRDT.getGCStats()` comes with the integration |
-| KER-027 onward (snapshots), `CRDT` integration (KER-030 to KER-033) | not started. Next: wire membership, frontier and GC into `CRDT` |
+| KER-026 GC stats | done: `buildGCStats` and `CRDT.getGCStats()` |
+| KER-033 events and membership updates | **partly done**, not ticked: `membershipChanged`, `gcEvent`, `sequenceChanged`; `updateMembership(view)` returns whether it was installed; `updateStableFrontier(frontier, epoch)` applies the frontier only at the current epoch (requirement 11.8), merges it monotonically, runs GC and redacts the log. Open: `snapshot()` and `rejoinFromSnapshot` |
+| KER-027 to KER-029 snapshots and rejoin | not started. Next: snapshot creation, validating serialization, `CRDT.fromSnapshot`, then the property tests |
 
 ## Source of truth
 
