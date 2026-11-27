@@ -247,7 +247,8 @@ export function assertValidVersionVector(value: unknown): asserts value is Versi
  * @returns true if valid
  */
 export function isValidReplicaId(replicaId: string): boolean {
-  if (!replicaId || replicaId.length === 0) return false;
+  // typeof first: the regex coerces its argument to a string, so 5 or ['a.0'] would otherwise pass
+  if (typeof replicaId !== 'string' || replicaId.length === 0) return false;
   return /^[a-zA-Z0-9_.-]+$/.test(replicaId);
 }
 

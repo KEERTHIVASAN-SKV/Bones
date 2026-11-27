@@ -60,6 +60,11 @@ import {
   performStage1GC,
   buildGCStats,
   redactReclaimedPayloads,
+  createSnapshot,
+  assertValidSnapshot,
+  serializeSnapshot,
+  deserializeSnapshot,
+  restoreRGA,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -135,6 +140,29 @@ describe('public API (index.ts) exposes the RGA', () => {
     expect(a.isAuthorHeld('b.0')).toBe(false);
     expect(a.getPendingCount()).toBe(0); // the in-flight operation lay beyond the cutoff: purged
     expect(a.applyOp(b.insert(undefined, 'too late')).status).toBe('fenced');
+  });
+
+  it('rejoin through the public entry point: evict, snapshot, serialize, restore as a NEW incarnation, catch up', () => {
+    for (const fn of [createSnapshot, assertValidSnapshot, serializeSnapshot, deserializeSnapshot, restoreRGA]) {
+      expect(typeof fn).toBe('function');
+    }
+    const members = createMembership(['a.0', 'c.0']);
+    const a = new CRDT<string>('a.0', members);
+    const c = new CRDT<string>('c.0', members);
+    const first = a.insert(undefined, 'one');
+    c.applyOp(first);
+    a.updateMembership(removeReplica(members, 'c.0', 0)); // c.0 is exorcised
+
+    // c comes back from a snapshot (taken by a, shipped as JSON) under a NEW ID
+    const json = serializeSnapshot(a.snapshot());
+    const rejoined = CRDT.fromSnapshot(deserializeSnapshot(json) as ReturnType<typeof a.snapshot>, 'c.1');
+    expect(rejoined.getSequence().map((e) => e.value)).toEqual(['one']);
+    expect(() => CRDT.fromSnapshot(deserializeSnapshot(json) as ReturnType<typeof a.snapshot>, 'c.0')).toThrow(RangeError); // never the old ID
+
+    // a later operation reaches it through the normal pipeline
+    const later = a.insert(first.id, 'two');
+    expect(rejoined.applyOp(later).status).toBe('applied');
+    expect(rejoined.getSequence().map((e) => e.value)).toEqual(['one', 'two']);
   });
 
   it('exports GC: frontier from acks, stability check, reclaim a payload, redact the log, stats', () => {

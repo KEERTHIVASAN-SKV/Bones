@@ -459,7 +459,8 @@ Applications (KER-078 to KER-080)
 
 #### Snapshot Module
 
-- [ ] 28. **Snapshot Creation** (KER-027)
+- [x] 28. **Snapshot Creation** (KER-027)
+  - **Status note**: done in `kernel/src/snapshot.ts` (`createSnapshot`): deep copies of the elements in depth-first order with their anchors (tombstones included), the VV, the membership WITH the evicted replicas' cutoffs, the Lamport clock, the replica ID and the GC stats, plus the stable frontier a rejoin snapshot carries. No wall-clock field. A payload that hides a Map or a Set is refused instead of being silently lost. A replica that never had a membership view (open mode) writes the empty epoch-0 view, and restoring that restores open mode.
   - Create `src/snapshot.ts` with:
     - `createSnapshot(rga, vv, membership, gcStats)` function
     - Include deep copies of elements (in traversal order, each with its `anchor`), VV, and membership (active members, evicted members WITH cutoffs, epoch)
@@ -476,7 +477,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-010, KER-011, KER-018, KER-025
   - **Validation**: Unit test: create snapshot → verify all fields present; verify no Date.now() calls; mutate original → verify snapshot unchanged
 
-- [ ] 29. **Snapshot Serialization** (KER-028)
+- [x] 29. **Snapshot Serialization** (KER-028)
+  - **Status note**: done: `serializeSnapshot` writes deterministic JSON via `stableStringify`, with the VV and membership converted to plain objects and sorted arrays first (so `Map`/`Set` data is not lost); `deserializeSnapshot` is the exact inverse and VALIDATES everything (`assertValidSnapshot`: field types, the VV and membership, the clock range, every element's ID against the VV, no duplicates, flag consistency, sibling order, and that the list is a true depth-first traversal of the anchor tree). `serialize(deserialize(json)) === json`. 40 mutants caught.
   - Implement `serializeSnapshot(snapshot)` function: deterministic JSON via `stableStringify`. Convert `Map`/`Set` fields (vv, membership) to plain objects/sorted arrays first: `JSON.stringify` alone turns them into `{}` and silently loses data
   - Implement `deserializeSnapshot(json)` function: parse, VALIDATE (trust boundary), and rebuild the Map/Set fields
   - Ensure deterministic serialization
@@ -489,7 +491,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-026
   - **Validation**: Unit test: serialize → deserialize → verify identical
 
-- [ ] 30. **Snapshot Rejoin and State Recovery** (KER-029)
+- [x] 30. **Snapshot Rejoin and State Recovery** (KER-029)
+  - **Status note**: done: `restoreRGA` rebuilds the anchor tree from the snapshot (delete-op bookkeeping is seeded from `deletedAt` for tombstones that still hold a payload, so GC may reclaim later than the snapshotting replica did, never earlier), and `CRDT.fromSnapshot(snapshot, replicaId?)` restores VV, membership with cutoffs, Lamport clock, frontier and GC byte count with an EMPTY log and buffer. Every later operation goes through the normal `applyOp` (no separate path). A returning evicted replica passes a NEW ID: the evicted ID is refused (`RangeError`), and so is the ID of another replica that already wrote.
   - Implement `restoreFromSnapshot(snapshot)` (design.md Algorithm 8): rebuild the RGA tree from the elements' anchors (appending in traversal order preserves newest-first child lists), VV, membership with cutoffs, and Lamport clock; start with an empty buffer and log
   - Rejoin = restore + feeding EVERY post-snapshot op through the normal `applyOp` pipeline (KER-031). There must be NO separate, simplified apply path for rejoin. The composition lives in the CRDT class (`CRDT.fromSnapshot(snapshot, replicaId?)`, KER-033); a returning evicted replica passes a NEW replicaId
   - **Acceptance Criteria**:
@@ -506,8 +509,8 @@ Applications (KER-078 to KER-080)
 
 ### Phase 3: CRDT Orchestrator
 
-- [ ] 31. **CRDT Class Initialization and State Management** (KER-030)
-  - **Status note**: partly done in `kernel/src/crdt.ts`: replicaId, RGA, VV, OpLog, dependency buffer, Lamport clock, membership (optional constructor argument; open mode without one), stable frontier and GC state exist. **Open** (so the box stays unticked): snapshot-based initialization (`CRDT.fromSnapshot`, KER-027 to KER-029).
+- [x] 31. **CRDT Class Initialization and State Management** (KER-030)
+  - **Status note**: done: replicaId, RGA, VV, OpLog, dependency buffer, Lamport clock, membership (optional constructor view; open mode without one), stable frontier, GC state, and snapshot-based initialization (`CRDT.fromSnapshot`).
   - Create `src/crdt.ts` with main CRDT class
   - Initialize RGA, VV, OpLog, Membership, GC state
   - Track current sequence number for this replica
@@ -561,8 +564,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-030
   - **Validation**: Unit test: insert/delete → query → verify accuracy
 
-- [ ] 34. **CRDT Events and Membership Updates** (KER-033)
-  - **Status note**: partly done: `on`/`off`, `sequenceChanged`, `membershipChanged` and `gcEvent` work. `updateMembership(view)` returns whether the view was installed (ignores a non-increasing or contradictory epoch, purges buffered ops that are now fenced, and ends the hold of an author it evicts). `updateStableFrontier(frontier, epoch)` takes the epoch (requirement 11.8), merges monotonically, runs Stage 1 GC and redacts the log (D-A). Eviction prepare phase (requirements 10.3): `holdAuthor(id)` buffers that author's operations and returns the contiguous applied seq to reply with; `releaseAuthor(id)` ends a hold. **Open** (box stays unticked): `snapshot()` and `rejoinFromSnapshot` (KER-027 to KER-029). Event payloads are not implemented: the listeners take no arguments.
+- [x] 34. **CRDT Events and Membership Updates** (KER-033)
+  - **Status note**: done: `on`/`off`, `sequenceChanged`, `membershipChanged` and `gcEvent`; `updateMembership(view)` (returns whether it was installed; ignores a non-increasing or contradictory epoch; purges buffered ops that are now fenced; ends the hold of an author it evicts); `updateStableFrontier(frontier, epoch)` (requirement 11.8: applied only at the current epoch; merges monotonically; runs Stage 1 GC and redacts the log, D-A); `holdAuthor`/`releaseAuthor` (eviction prepare phase, requirements 10.3); `snapshot()` and `CRDT.fromSnapshot`. The task text's `rejoinFromSnapshot(snapshot)` instance method is not provided: restoring is the static `fromSnapshot`, because a restored replica starts with an empty log and buffer, as design.md Algorithm 8 says. Event payloads are not implemented: the listeners take no arguments.
   - Implement event system:
     - `on(event, callback)`: register listener
     - `off(event, callback)`: unregister listener
@@ -970,7 +973,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-034, KER-040
   - **Validation**: Property test passes
 
-- [ ] 62. **PBT - Snapshot Fidelity (Property 15)** (KER-62)
+- [x] 62. **PBT - Snapshot Fidelity (Property 15)** (KER-62)
+  - **Status note**: done in `kernel/tests/snapshot.properties.test.ts` (6 properties, seeded, 150 runs; the plan's eighth property): snapshot + later operations in any order (and redelivered) equals the replica that stayed connected, with and without GC; delivering several times in different orders is the same as once; the restored replica is identical through serialize/deserialize; a restart of the SAME replica continues its own sequence and converges; a snapshot taken after an eviction keeps fencing the evicted author at its cutoff; GC after a restore reclaims exactly what GC on the original does. 22 snapshot and restore mutants are all caught by the unit and property tests together (the properties alone catch the state bugs: lost tombstones, VV, anchors, deletedAt, payloads, restore order).
   - Generate operation sequences
   - Take snapshot at random point
   - Apply post-snapshot ops through `applyOp` in various orders, with duplicates and with ops from authors evicted after the snapshot

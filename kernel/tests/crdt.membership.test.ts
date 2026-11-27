@@ -39,6 +39,10 @@ function fingerprint(c: CRDT<string>): string {
 }
 
 describe('a replica with no membership view accepts every author (open mode)', () => {
+  it.each([[5], [null], [undefined], [{}], [['a.0']], [true]])('the constructor rejects the non-string replica ID %j (the regex would accept 5)', (id) => {
+    expect(() => new CRDT<string>(id as unknown as string)).toThrow(TypeError);
+  });
+
   it('applies operations from authors nobody told it about', () => {
     const r = new CRDT<string>('a.0');
     for (const op of chain('stranger.0', 3)) expect(r.applyOp(op).status).toBe('applied');

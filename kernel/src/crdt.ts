@@ -8,7 +8,7 @@
  * Implemented: local insert/delete, the applyOp pipeline (validate, fence by author + cutoff,
  * suppress duplicates, buffer, apply, drain), membership (`updateMembership`), the stable
  * frontier and Stage 1 GC with log redaction (`updateStableFrontier`), the queries below, and
- * events. Not implemented yet (separate task): snapshots and rejoin.
+ * events, and snapshots (`snapshot()` and `CRDT.fromSnapshot`).
  *
  * Open mode: a replica that was never given a membership view accepts operations from every
  * author, so a standalone replica works without a coordinator. Fencing starts when the first
@@ -24,6 +24,7 @@ import type {
   OpIdKey,
   Operation,
   OperationBuffer,
+  Snapshot,
   VersionVector,
 } from './types.js';
 import {
@@ -47,6 +48,7 @@ import { appendOp, createOpLog, getAllOps, redactReclaimedPayloads } from './opl
 import type { OpLog } from './oplog.js';
 import { applyMembershipView, assertValidMembershipView, getMembership, isFenced as isFencedByView } from './membership.js';
 import { buildGCStats, performStage1GC } from './gc.js';
+import { assertValidSnapshot, createSnapshot, restoreRGA } from './snapshot.js';
 import { EventEmitter } from './events.js';
 import type { EventCallback, EventType } from './events.js';
 import {
@@ -89,7 +91,7 @@ export class CRDT<T = unknown> {
   /** This replica's ID (e.g. `site1.0`). A returning evicted replica must use a NEW one. */
   readonly replicaId: string;
 
-  private readonly rga: RGAState<T> = createRGA<T>();
+  private rga: RGAState<T> = createRGA<T>(); // replaced only by CRDT.fromSnapshot
   private vv: VersionVector = new Map();
   private readonly buffer: OperationBuffer<T> = createOperationBuffer<T>();
   private readonly log: OpLog<T> = createOpLog<T>();
@@ -597,6 +599,72 @@ export class CRDT<T = unknown> {
    */
   getGCStats(): GCStats {
     return buildGCStats(this.rga, this.bytesSaved, this.membership?.evictedMembers.size ?? 0, this.frontier);
+  }
+
+  // ==================== Snapshots ====================
+
+  /**
+   * A snapshot of this replica (design.md Algorithm 7): every element in depth-first order with its
+   * anchor (tombstones too), the version vector, the membership with the evicted replicas' cutoffs,
+   * the Lamport clock, the GC statistics and the stable frontier this replica holds. It shares
+   * nothing with the replica, and has no wall-clock field. It does NOT contain the operation log or
+   * the dependency buffer: a replica restored from it starts a fresh log. A replica that never
+   * received a membership view (open mode) writes the empty epoch-0 view.
+   *
+   * @returns A snapshot, ready to serialize with `serializeSnapshot`
+   * @throws TypeError if a payload cannot be copied faithfully (it hides a Map or a Set)
+   */
+  snapshot(): Snapshot<T> {
+    return createSnapshot({
+      rga: this.rga,
+      vv: this.vv,
+      membership: this.membership,
+      lamportClock: this.lamportClock,
+      replicaId: this.replicaId,
+      gcStats: this.getGCStats(),
+      stableFrontier: this.frontier,
+    });
+  }
+
+  /**
+   * Restore a replica from a snapshot (design.md Algorithm 8, restore step; requirements.md 13).
+   * This restores STATE only: the elements and their anchors, the version vector, the membership
+   * with cutoffs, the Lamport clock, the stable frontier and the GC statistics. The log and the
+   * buffer start empty. Every operation after the snapshot must then go through `applyOp`, which
+   * applies the full pipeline (fencing by the snapshot's membership and cutoffs, duplicate
+   * suppression, dependency buffering, contiguous version vector). There is no separate path.
+   *
+   * `replicaId` defaults to the snapshot's own (a plain restart of the same replica, which
+   * continues its own sequence). A returning evicted replica passes a NEW ID (a new incarnation,
+   * for example `tab-1234abcd.1`), which starts its own sequence at 1.
+   *
+   * @param snapshot - A snapshot (validated here: it may have come from another tab)
+   * @param replicaId - The ID of the restored replica
+   * @returns A new replica
+   * @throws TypeError if the snapshot is not valid, or the ID is not a valid replica ID
+   * @throws RangeError if the ID is an EVICTED replica (an evicted ID never returns), or belongs to
+   *   another replica that already wrote or is a member (two replicas must never share an ID)
+   */
+  static fromSnapshot<T>(snapshot: Snapshot<T>, replicaId?: string): CRDT<T> {
+    assertValidSnapshot(snapshot);
+    const id = replicaId ?? snapshot.replicaId;
+    const crdt = new CRDT<T>(id); // validates the ID
+    if (snapshot.membership.evictedMembers.has(id)) {
+      throw new RangeError(`CRDT.fromSnapshot: "${id}" was evicted and cannot return; use a new replica ID`);
+    }
+    if (id !== snapshot.replicaId && (snapshot.vv.has(id) || snapshot.membership.activeMembers.has(id))) {
+      throw new RangeError(`CRDT.fromSnapshot: "${id}" belongs to another replica; use a new replica ID`);
+    }
+
+    crdt.rga = restoreRGA(snapshot);
+    crdt.vv = new Map(snapshot.vv);
+    crdt.lamportClock = snapshot.lamportClock;
+    const m = snapshot.membership;
+    const openMode = m.epoch === 0 && m.activeMembers.size === 0 && m.evictedMembers.size === 0;
+    crdt.membership = openMode ? undefined : getMembership(m);
+    crdt.frontier = new Map(snapshot.stableFrontier ?? []);
+    crdt.bytesSaved = snapshot.gcStats?.bytesSaved ?? 0;
+    return crdt;
   }
 
   // ==================== Events ====================

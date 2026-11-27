@@ -12,11 +12,15 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 | Kernel RGA: insert, delete and tombstones, sequence queries, payload reclamation primitive (KER-006 to KER-010) | done, with seeded property tests |
 | Kernel version-vector rules (`advanceContiguous`, `stableFrontier`), append-only op log with replay, dependency buffer (KER-011, 013 to 017) | done, tested; mutation-checked |
 | Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries (including `opsSince` for catch-up and `getAllElements` for tombstones), events, Lamport-time limit | working and tested; **fencing is a stub** (accepts everything) until membership exists |
-| Kernel membership and eviction, stable frontier, Stage 1 GC, snapshots and rejoin | not started |
-| `coordinator/` | placeholder |
-| `apps/graveyard-whiteboard`, `apps/cursed-checklist` | placeholders (the two separate app folders the Skeleton Crew category requires) |
+| Kernel membership, epochs and fencing by author and cutoff (KER-018 to KER-022) | done, 108 tests, mutation-checked |
+| Kernel stable frontier, Stage 1 GC (payloads only; the tombstones stay) and the operation-log redaction that makes the freed memory real (KER-023 to KER-026) | done, tested, mutation-checked |
+| Kernel eviction prepare phase (`holdAuthor`), snapshots and rejoin as a new incarnation (KER-027 to KER-033) | done, tested, mutation-checked |
+| Gate A property tests: frontier safety, GC safety including the redacted log, fencing, snapshot rejoin (22 + 6 properties) | done, seeded |
+| `coordinator/` | the pure decision core (membership, frontier, manual two-phase eviction) is built and tested (104 tests); it runs in the browser on the Checklist's control page. No Node service |
+| `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons (207 tests; the demo script D1 to D5 passes in real browsers). Rejoin is not built; there is no public URL yet (the Pages workflow exists but has not run) |
+| `apps/graveyard-whiteboard` | placeholder (the second app folder the Skeleton Crew category requires) |
 
-Two replicas can already exchange operations and converge (see the example below). Membership, eviction, GC and snapshots are the next pieces; until they exist, `CRDT` accepts operations from any author.
+Replicas exchange operations and converge, a stalled replica holds back garbage collection, a manual eviction lets it move, the evicted replica's later edits are refused, and a returning replica rejoins from a snapshot under a new ID (see the examples below). What is NOT done yet: the Rejoin button in the app, the second app, a public URL, the demo video and the write-up. Numbers are in [STATUS.md](STATUS.md).
 
 ## Run it
 
@@ -39,8 +43,8 @@ Other kernel scripts (run inside `kernel/`): `npm run typecheck`, `npm run build
 |------|------------|
 | `kernel/` | The pure TypeScript CRDT kernel (no DOM, network, storage, clocks or randomness in `kernel/src`) |
 | `apps/graveyard-whiteboard/` | Collaborative drawing app (placeholder) |
-| `apps/cursed-checklist/` | Collaborative to-do app (placeholder) |
-| `coordinator/` | Small Node.js coordinator service (placeholder) |
+| `apps/cursed-checklist/` | Collaborative to-do app with the control page and the Graveyard panel (works; see its README) |
+| `coordinator/` | The coordinator's pure decision core (membership, frontier, manual eviction); no standalone service |
 | `scripts/` | Guard scripts used by the hooks and by hand: `check-purity.mjs`, `check-submission.mjs`, `quality-gate.mjs` |
 | `.kiro/specs/crdt-kernel/` | Requirements, design and task list the code is built from |
 | `.kiro/steering/` | Project context and technical conventions for the Kiro agent |
@@ -56,8 +60,8 @@ Allowed claims, from the project spec (section 3.4):
 - A small, educational CRDT kernel.
 - The RGA is tested with seeded property-based tests (fast-check). More properties are specified and still to be written.
 - It aims to make tombstone reclamation, membership and fencing visible (the Graveyard panel in the apps).
-- It uses a small coordinator for membership and compaction authorization; edits are peer-to-peer. (Design; the coordinator is not built yet.)
-- Evicted peers must rejoin from a snapshot. (Design; snapshots are not built yet.)
+- It uses a small coordinator for membership and compaction authorization; edits are peer-to-peer. (Built as a pure core that runs on the Checklist's control page; there is no standalone service.)
+- Evicted peers must rejoin from a snapshot, as a new replica. (Built in the kernel; the Rejoin button in the app is not.)
 
 It is **not** a new CRDT algorithm, **not** production-ready, **not** a replacement for Yjs, Automerge or Loro, **not** fully decentralized (membership needs the coordinator), and **not** formally proven correct.
 
@@ -118,14 +122,27 @@ bob.on('sequenceChanged', () => render());
 
 Catch-up: a transport that does not replay old messages (for example `BroadcastChannel`) should have each replica send its version vector now and then and answer a peer's vector with `opsSince(thatVector)`. A peer holding buffered operations can only send what it has applied, so catching up can take more than one round; repeating the exchange converges.
 
-Planned, not implemented yet:
+Membership, garbage collection and snapshots:
 
 ```typescript
-const snapshot = alice.snapshot();
-const rejoined = CRDT.fromSnapshot(snapshot, 'site1.1'); // a returning replica uses a NEW replica ID
-alice.getStableFrontier();
-alice.getGCStats();
-alice.getMembershipView();
+import { CRDT, computeStableFrontier, createMembership, removeReplica, serializeSnapshot, deserializeSnapshot } from '@bones/kernel';
+
+const members = createMembership(['alice.0', 'bob.0']);       // epoch 0; edits are fenced by AUTHOR and CUTOFF
+const alice = new CRDT<string>('alice.0', members);
+
+// eviction, phase 1: the survivors freeze the target and report how much of it they hold
+const seq = alice.holdAuthor('bob.0');                         // contiguous applied seq: the reply to the coordinator
+// phase 2: the coordinator publishes the view; the cutoff is the max of the survivors' replies
+alice.updateMembership(removeReplica(members, 'bob.0', seq));  // epoch 1; bob's later operations are refused ("fenced")
+
+// garbage collection: payloads (not tombstones) go once every member has applied the delete
+const frontier = computeStableFrontier(acks, new Set(['alice.0']));
+alice.updateStableFrontier(frontier, alice.getMembershipView().epoch);   // applied only at the current epoch
+alice.getGCStats();                                              // tombstoneCount stays; payloadsReclaimed and bytesSaved grow
+
+// rejoin: a snapshot (validated when read back), restored under a NEW replica ID
+const json = serializeSnapshot(alice.snapshot());
+const rejoined = CRDT.fromSnapshot(deserializeSnapshot(json), 'bob.1');   // 'bob.0' itself is refused: an evicted ID never returns
 ```
 ## Core types
 

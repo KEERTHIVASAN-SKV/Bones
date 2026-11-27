@@ -324,6 +324,19 @@ describe('buildOpIndex', () => {
   });
 });
 
+describe('isValidReplicaId with values that are not strings', () => {
+  it.each([[5], [0], [true], [['a.0']], [{ toString: () => 'a.0' }], [null], [undefined], [Symbol('a')]])(
+    'is false for %s (the regex would coerce several of them into a match)',
+    (value) => {
+      expect(isValidReplicaId(value as unknown as string)).toBe(false);
+    }
+  );
+
+  it('is still true for the IDs the kernel uses', () => {
+    for (const id of ['a', 'site1.0', 'tab-0aff007b.0', 'r_1-x.2', '__proto__']) expect(isValidReplicaId(id)).toBe(true);
+  });
+});
+
 describe('estimatePayloadSize', () => {
   it('returns 0 for undefined, null and non-serializable values', () => {
     expect(estimatePayloadSize(undefined)).toBe(0);

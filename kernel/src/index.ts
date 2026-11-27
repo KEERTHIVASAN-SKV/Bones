@@ -56,6 +56,12 @@ export {
 export { performStage1GC, buildGCStats } from './gc.js';
 export type { GCResult } from './gc.js';
 
+// Snapshots: take, validate, serialize (deterministic), restore
+export {
+  createSnapshot, assertValidSnapshot, serializeSnapshot, deserializeSnapshot, restoreRGA,
+} from './snapshot.js';
+export type { SnapshotParts } from './snapshot.js';
+
 // Dependency buffer for out-of-order operations
 export {
   createOperationBuffer, bufferOp, takeReadyFromBuffer, takeBufferedOp, purgeFencedBuffered,
