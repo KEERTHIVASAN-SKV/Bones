@@ -67,7 +67,8 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 | F1 Lamport limit | done: `MAX_LAMPORT` = 2^48; `assertValidOperation` rejects larger Lamport times (and unsafe epochs); a replica at the limit refuses local operations. Reproduced first: a forged `2**53` froze the clock (`clock + 1 === clock`) |
 | F3 catch-up | done: `computeVVDifference`, `CRDT.opsSince`; sync property tests. Finding: a peer holding buffered operations can only send what it has applied, so catch-up can take more than one round; repeating the exchange converges |
 | F4 tombstones | done: `CRDT.getAllElements()` returns every element including deleted ones, as copies |
-| KER-018 onward (membership, fencing, GC, snapshots) | not started. Next: membership view + epochs + cutoffs (KER-018 to KER-022), real fencing in `applyOp`, then stable frontier + GC |
+| KER-018 to KER-022 membership, epochs, fencing, cutoffs, serialization | done (`kernel/src/membership.ts`, 108 tests incl. the public entry point). Edit ops are fenced by author + cutoff, control messages by epoch; `applyMembershipView` ignores a non-increasing epoch and ignores a higher-epoch view that contradicts known state. 42 mutants, all caught. Not yet wired into `CRDT` (the `isFenced` stub still accepts everything until KER-031/033) |
+| KER-023 onward (GC, frontier in `CRDT`, snapshots) | not started. Next: Stage 1 GC with log redaction (D-A), then `CRDT` integration |
 
 ## Source of truth
 

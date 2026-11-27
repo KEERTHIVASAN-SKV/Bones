@@ -37,6 +37,22 @@ import {
   computeVVDifference,
   getAllElements,
   CRDT,
+  createMembership,
+  getMembership,
+  getEpoch,
+  addReplica,
+  removeReplica,
+  applyMembershipView,
+  assertValidMembershipView,
+  isReplicaActive,
+  getCutoff,
+  isBeyondCutoff,
+  isFenced,
+  isControlMessageRejected,
+  membershipToJSON,
+  membershipFromJSON,
+  serializeMembership,
+  deserializeMembership,
 } from '../src/index.js';
 import type { RGAState, ParentKey, Operation } from '../src/index.js';
 
@@ -75,6 +91,22 @@ describe('public API (index.ts) exposes the RGA', () => {
     ]) {
       expect(typeof fn).toBe('function');
     }
+  });
+
+  it('exports membership: evict with a cutoff, fence by author, round-trip through JSON', () => {
+    for (const fn of [
+      createMembership, getMembership, getEpoch, addReplica, removeReplica, applyMembershipView,
+      assertValidMembershipView, isReplicaActive, getCutoff, isBeyondCutoff, isFenced,
+      isControlMessageRejected, membershipToJSON, membershipFromJSON, serializeMembership,
+      deserializeMembership,
+    ]) {
+      expect(typeof fn).toBe('function');
+    }
+    const m = removeReplica(addReplica(createMembership(['a']), 'b'), 'b', 3);
+    expect(getEpoch(m)).toBe(2);
+    expect(isFenced(m, 'b', 3)).toBe(false);
+    expect(isFenced(m, 'b', 4)).toBe(true);
+    expect(deserializeMembership(serializeMembership(m))).toEqual(m);
   });
 
   it('exports the CRDT class, and two replicas converge through the public entry point', () => {

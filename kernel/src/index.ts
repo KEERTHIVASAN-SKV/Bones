@@ -71,6 +71,15 @@ export {
 } from './rga.js';
 export type { RGAState, ParentKey } from './rga.js';
 
+// Membership, epochs and fencing (edit ops by author + cutoff, control messages by epoch)
+export {
+  createMembership, getMembership, getEpoch, addReplica, removeReplica, applyMembershipView,
+  assertValidMembershipView, isReplicaActive, getCutoff, isBeyondCutoff, isFenced,
+  isControlMessageRejected, membershipToJSON, membershipFromJSON, serializeMembership,
+  deserializeMembership,
+} from './membership.js';
+export type { MembershipJSON } from './membership.js';
+
 // The CRDT replica (local operations, applyOp pipeline, queries, events)
 export { CRDT } from './crdt.js';
 export type { ApplyResult } from './crdt.js';

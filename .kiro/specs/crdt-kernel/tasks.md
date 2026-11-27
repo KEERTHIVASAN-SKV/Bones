@@ -315,7 +315,8 @@ Applications (KER-078 to KER-080)
 
 #### Membership Module
 
-- [ ] 18. **Membership View and Epoch Tracking** (KER-018)
+- [x] 18. **Membership View and Epoch Tracking** (KER-018)
+  - **Status note**: done in `kernel/src/membership.ts` (functions take the view as their first argument and return new views; `getMembership` returns a copy).
   - Create `src/membership.ts` with:
     - `MembershipView` (`activeMembers` set, `evictedMembers` map replicaId → cutoff, `epoch` number)
     - `createMembership(activeMembers)` function: initialize at epoch 0 with no evicted members
@@ -331,7 +332,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-004
   - **Validation**: Unit test: create membership → verify epoch is 0; add/remove replica → verify epoch increments
 
-- [ ] 19. **Membership Updates and Eviction** (KER-019)
+- [x] 19. **Membership Updates and Eviction** (KER-019)
+  - **Status note**: done. `applyMembershipView` returns `{ view, applied }`. It accepts an epoch that skips numbers (views carry the whole state), and ignores a higher-epoch view that contradicts what is known: an evicted replica un-evicted or given another cutoff, or a member that vanishes without being evicted. Not implemented: the "eviction epoch and reason" diagnostics (not used by the demo).
   - Implement `addReplica(membership, replicaId)` function: add replica, increment epoch
   - Implement `removeReplica(membership, replicaId, cutoff)` function: evict replica (move it to `evictedMembers` with its cutoff), increment epoch
   - Implement `applyMembershipView(current, newView)`: install a view published by the coordinator; ignore a view whose epoch is not greater than the current epoch
@@ -345,7 +347,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-018
   - **Validation**: Unit test: add/remove → verify epoch and membership
 
-- [ ] 20. **Fencing: Edit Operations by Author + Cutoff, Control Messages by Epoch** (KER-020)
+- [x] 20. **Fencing: Edit Operations by Author + Cutoff, Control Messages by Epoch** (KER-020)
+  - **Status note**: done. `isReplicaActive` takes `(view, replicaId)` like the other functions (the text above has the reverse order). The functions return a boolean; the caller puts the current epoch in the `rejected` reply. A malformed sender epoch (NaN, negative, fractional) is rejected, because a failed `<` comparison would let it through.
   - Two SEPARATE mechanisms (requirements.md §10 "Fencing Architecture"); do not conflate them
   - Implement `isFenced(membership, replicaId, seq)` for EDIT operations: accept if the author is active, OR the author is evicted AND `seq <= cutoff`; reject otherwise (unknown author = reject). The op's `epoch` field is NEVER consulted.
   - Implement `isControlMessageRejected(membership, senderId, senderEpoch)` for control messages (ack, sync request, membership/frontier update): reject if the sender is not active OR its epoch is lower than the current epoch; the reply carries the current epoch
@@ -362,7 +365,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-019
   - **Validation**: Unit test: evicted-author op beyond cutoff → rejected; at cutoff → accepted; op with a stale `epoch` value from an active author → accepted; control message with stale epoch → rejected
 
-- [ ] 21. **Membership Serialization and Snapshots** (KER-021)
+- [x] 21. **Membership Serialization and Snapshots** (KER-021)
+  - **Status note**: done for membership: `serializeMembership` / `deserializeMembership` (validating, deterministic, `__proto__` safe) plus `membershipToJSON` / `membershipFromJSON` for embedding in other messages. Snapshots are KER-027 to KER-029.
   - Implement `serializeMembership(membership)` function: JSON serialization
   - Implement `deserializeMembership(json)` function: JSON parsing
   - Ensure deterministic serialization
@@ -374,7 +378,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-018
   - **Validation**: Unit test: serialize/deserialize → verify identical
 
-- [ ] 23. **Eviction Barrier and Cutoff Tracking** (KER-022)
+- [x] 23. **Eviction Barrier and Cutoff Tracking** (KER-022)
+  - **Status note**: done. `recordCutoff` is `removeReplica(view, id, cutoff)`: cutoffs live in `MembershipView.evictedMembers`. `getCutoff` and `isBeyondCutoff` are exported. The two-phase barrier (survivors backfill and confirm) belongs to the coordinator, not the kernel.
   - Implement `cutoffs: Map<replicaId, seq>` to track eviction cutoff for each evicted replica
   - Implement `recordCutoff(replicaId, cutoffSeq)` function: record max applied seq before eviction
   - Implement `isBeyondCutoff(replicaId, seq)` function: check if op seq > cutoff[replicaId]
