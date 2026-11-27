@@ -1,0 +1,76 @@
+# Demo Apps Tasks
+
+Every task traces to a demo step (D1 to D7 in `requirements.md`). Build in the order of the demo story, not in task-number order. A box is ticked only when its tests pass and the step works; keep this file in step with `STATUS.md`.
+
+Decision filter before starting anything: does it appear in the demo script, a property test or a README claim? If not, skip it.
+
+## Gates
+
+| Gate | Evidence |
+|------|----------|
+| A: kernel safety | Property tests (seeded, 100+ runs): frontier safety, GC safety including the redacted log, fencing. `node scripts/quality-gate.mjs` passes. |
+| B: the story works | In 3 tabs: stall a tab, the panel shows the frontier stuck and 0 bytes reclaimed; exorcise it, the frontier moves and bytes are reclaimed; the stalled tab's later edits are rejected. A deployed URL exists. |
+| C: rejoin | An evicted tab rejoins from a snapshot with a new ID and shows the same list; the deployed URL still works. |
+| D: second app | The Whiteboard works through the same flow; both apps deployed. |
+| E: package | Video public; README, benchmark table and limits final. |
+
+## Tasks
+
+- [x] DA-0. **Spec from the demo script** (M0)
+  - This folder.
+
+- [x] DA-1. **Checklist: add, bury, live sync, late tab catch-up** (D1, R1)
+  - `apps/cursed-checklist`: `replica.ts`, `transport.ts`, `sync.ts`, `session.ts`, `App.tsx`. 124 tests; three real Edge tabs checked.
+  - Dependencies: kernel `applyOp`, `opsSince`.
+
+- [ ] DA-2. **Kernel pieces the demo needs** (Gate A; kernel tasks KER-018 to KER-033)
+  - Membership with fencing by author and cutoff, Stage 1 GC with log redaction (D-A), `CRDT.updateMembership`, `updateStableFrontier`, queries, and the property tests.
+  - Tracked in `.kiro/specs/crdt-kernel/tasks.md`.
+
+- [ ] DA-3. **Coordinator core** (D3, D4; R5)
+  - `coordinator/src/core.ts`, pure and unit-tested: `onHello`, `frontier`, `evict`.
+  - Dependencies: DA-2.
+
+- [ ] DA-4. **Wire v2 and `pause()`** (D3, D5; R3, R5)
+  - `hello` gains `from` and `epoch`; new `view` and `frontier` messages; `Sync.pause()/resume()` with an unsent-edits counter.
+  - Dependencies: DA-2.
+
+- [ ] DA-5. **`/control` page** (D4; R5)
+  - Second Vite entry in the same build. Members with last-heard time, frontier, epoch, **Exorcise** per member.
+  - Dependencies: DA-3, DA-4.
+
+- [ ] DA-6. **Graveyard panel in the Checklist** (D2, D3, D4; R4)
+  - Honest labels (see design.md). Stall and Stress buttons.
+  - Dependencies: DA-2, DA-4.
+
+- [ ] DA-7. **Fencing made visible** (D5; R6)
+  - Message in the panel when a paused or evicted tab's later edits are rejected.
+  - Dependencies: DA-4, DA-6.
+
+- [ ] DA-8. **Early deploy** (all steps; R9; Gate B)
+  - GitHub Pages workflow building the Checklist on Node 22, with its Vite `base`.
+  - Dependencies: DA-1.
+
+- [ ] DA-9. **Snapshot and Rejoin** (D6; R7; Gate C)
+  - Kernel snapshot tasks KER-027 to KER-029, `CRDT.snapshot()`, `CRDT.fromSnapshot(snapshot, newReplicaId)`, UI Rejoin button.
+  - Dependencies: DA-2, DA-6.
+
+- [ ] DA-10. **Benchmark** (D7; R10)
+  - `kernel/scripts/bench-gc.mjs`: N operations with one stalled replica versus the same run after eviction.
+  - Dependencies: DA-2.
+
+- [ ] DA-11. **Extract `shared/`** (R8; S5)
+  - Transport, sync, panel and control page move to `shared/`, imported by alias. Both app folders must still exist.
+  - Dependencies: DA-5, DA-6.
+
+- [ ] DA-12. **Graveyard Whiteboard** (R8; Gate D)
+  - Strokes as sequence elements (arrays of points), live drawing in two windows, undo by burying, the same panel and `/control`. Redeploy both apps.
+  - Dependencies: DA-11.
+
+- [ ] DA-13. **Package** (Gate E)
+  - Bug-bash on the deployed URLs, README (one-minute explainer, screenshots, benchmark table, honest limits), video under 3 minutes, blog post, Kiro write-up.
+  - Dependencies: DA-12, DA-10.
+
+## Spill rule
+
+If a day runs over, cut in this order: panel styling, the Whiteboard's extras, the benchmark's extra rows, snapshot UI polish. Never cut fencing, GC safety, payload redaction, the property tests or the Graveyard panel.
