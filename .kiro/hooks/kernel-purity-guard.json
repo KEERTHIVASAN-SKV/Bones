@@ -4,8 +4,8 @@
     {
       "name": "Kernel purity guard",
       "trigger": "PostFileSave",
-      "description": "On saving a file under kernel/src, fail if it uses Date.now, Math.random, DOM, timers, network, storage or localeCompare (tech.md Determinism Rules).",
-      "matcher": "(^|[\\\\/])kernel[\\\\/]src[\\\\/].*\\.ts$",
+      "description": "On saving a file under kernel/src (or coordinator/src/core.ts, the coordinator's pure decision logic), fail if it uses Date.now, Math.random, DOM, timers, network, storage or localeCompare (tech.md Determinism Rules).",
+      "matcher": "(^|[\\\\/])(kernel[\\\\/]src[\\\\/].*|coordinator[\\\\/]src[\\\\/]core)\\.ts$",
       "action": {
         "type": "command",
         "command": "node scripts/check-purity.mjs",

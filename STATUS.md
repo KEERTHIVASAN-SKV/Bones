@@ -37,6 +37,24 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 - **CI:** the `checklist` job runs on Node 22 (Vitest 5 needs `^22.12 || ^24 || >=26`); the `kernel` job now runs on Node 22 as well, so both jobs match (the kernel itself still only needs Node 20 or newer). Both jobs were simulated from a fresh clone of `4c0989e` (kernel gate; app `npm ci`, `npm test`, `npm run build`, `npm audit`; all exit 0).
 - **Design choice:** `sync.ts` applies every valid operation and hides values that are not items at render time. Ignoring an operation with a bad value would leave a gap in its author's sequence and stall all later operations from that author.
 
+## Coordinator (`coordinator/`, KER-077, demo-apps task DA-3)
+
+```bash
+cd coordinator
+npm ci
+npm run typecheck
+npm run lint
+npm test
+```
+
+Last verified run: typecheck and lint clean; 104 tests pass; `core.ts` has 100% line coverage. `npm audit` reports the same dev-tooling advisories as the kernel (vitest, vite, esbuild, ESLint plugins; no runtime dependencies). `@types/node` is pinned to 22.20.5, the newest 22.x that is at least two weeks old.
+
+- **Built:** `coordinator/src/core.ts`, the pure decision logic (`CoordinatorCore`). A hello is the acknowledgement; the stable frontier is the kernel's `computeStableFrontier` over active members, kept monotonic and re-broadcast so a lost message cannot strand GC; eviction is manual and two-phase (prepare, cutoff = max of the survivors' replies, publish, pending until every active member holds the target's operations up to the cutoff); stale-epoch and non-member control messages are refused; nothing is evicted automatically.
+- **Tested:** 104 tests. Eight drive the core together with real kernel replicas: stall, exorcise, reclaim, fence; a live target; a stalled survivor and abort; a lost prepare; a missed view. 45 mutants of `core.ts` were applied, all caught.
+- **Guard rails:** `scripts/check-purity.mjs` and the purity hook now also cover `coordinator/src/core.ts` (checked: a planted `Date.now`, `Math.random`, timer, `console` or `fetch` is reported). CI has a `coordinator` job on Node 22 (parsed, not yet run on GitHub).
+- **Deviation from the Nov 26 plan:** the plan's wire list has no prepare round, but requirement 10.3 needs one (survivors must freeze the target and report their seq, or a live target splits them). `prepare`, `prepared`, `release` and `rejected` were added; there is still no separate confirm message (the hello is the confirmation). Recorded in `.kiro/specs/demo-apps/design.md`.
+- **Not built:** the adapters that carry it to real tabs (the `/control` page and `sync.ts` wire v2; DA-4, DA-5), so nothing talks to a real tab yet.
+
 ## Tasks (`.kiro/specs/crdt-kernel/tasks.md`)
 
 | Task | State |
@@ -97,7 +115,7 @@ Last verified run: 124 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 
 | Hook | Trigger | Does |
 |------|---------|------|
-| `kernel-purity-guard` | PostFileSave on `kernel/src/**/*.ts` | `node scripts/check-purity.mjs` |
+| `kernel-purity-guard` | PostFileSave on `kernel/src/**/*.ts` and `coordinator/src/core.ts` | `node scripts/check-purity.mjs` |
 | `kernel-quality-gate` | Stop | `node scripts/quality-gate.mjs --hook` (reports a failure on stdout and exits 0; without the flag, manual and CI runs exit 1) |
 | `submission-check` | SessionStart | `node scripts/check-submission.mjs` |
 | `task-done-bookkeeping` | PostTaskExec | asks the agent to run the gate, tick `tasks.md` honestly, update this file, commit |
@@ -120,7 +138,7 @@ The hooks run from the repo root (confirmed: the Stop hook found `scripts/` and 
 - [x] MIT `LICENSE` at repo root
 - [x] `.kiro/` committed (specs, steering, hooks); not gitignored
 - [x] Two separate app folders: `apps/graveyard-whiteboard` (placeholder), `apps/cursed-checklist` (first working version, no Graveyard panel yet)
-- [x] `coordinator/` folder (placeholder)
+- [x] `coordinator/` folder (the pure core is built and tested; the adapters that connect it to the apps are not built yet)
 - [ ] Working kernel, two working apps, public URL(s)
 - [ ] Demo video, write-up covering specs, hooks and steering
 - [ ] README states limitations plainly: educational implementation, not production-ready, not a new algorithm, not a Yjs/Automerge/Loro replacement

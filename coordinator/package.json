@@ -1,7 +1,26 @@
 {
   "name": "@bones/coordinator",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Coordinator service: stable frontier, membership and manual eviction for the Bones demo apps (placeholder until KER-077)",
-  "license": "MIT"
+  "type": "module",
+  "description": "Coordinator for the Bones demo apps: stable frontier, membership and manual two-phase eviction (KER-077). A pure core plus thin adapters.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint src tests --ext .ts",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@typescript-eslint/eslint-plugin": "8.0.0",
+    "@typescript-eslint/parser": "8.0.0",
+    "@vitest/coverage-v8": "2.0.5",
+    "eslint": "8.57.0",
+    "typescript": "5.6.3",
+    "vitest": "2.0.5"
+  }
 }

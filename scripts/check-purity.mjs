@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = realpathSync.native(fileURLToPath(new URL('..', import.meta.url))); // canonical drive-letter case
 const srcDir = join(root, 'kernel', 'src');
+// Other files that must be as pure as the kernel: the coordinator's decision logic. Its adapters
+// (the /control page, a Node service) do I/O and are NOT listed here.
+const alsoPure = [join(root, 'coordinator', 'src', 'core.ts')];
 
 const FORBIDDEN = [
   [/\bDate\.now\b/, 'Date.now()'],
@@ -46,7 +49,7 @@ if (!existsSync(srcDir)) {
 }
 
 const violations = [];
-for (const file of walk(srcDir)) {
+for (const file of [...walk(srcDir), ...alsoPure.filter((f) => existsSync(f))]) {
   const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
   lines.forEach((line, i) => {
     for (const [re, label] of FORBIDDEN) {
@@ -56,8 +59,8 @@ for (const file of walk(srcDir)) {
 }
 
 if (violations.length > 0) {
-  console.error('Kernel purity violations (see .kiro/steering/tech.md, "Determinism Rules"):');
+  console.error('Purity violations (see .kiro/steering/tech.md, "Determinism Rules"):');
   for (const v of violations) console.error('  ' + v);
   process.exit(1);
 }
-console.log('check-purity: kernel/src is pure');
+console.log('check-purity: kernel/src and coordinator/src/core.ts are pure');

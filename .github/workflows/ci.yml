@@ -11,6 +11,21 @@ jobs:
         working-directory: kernel
       - run: node scripts/quality-gate.mjs
       - run: node scripts/check-submission.mjs
+  coordinator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: coordinator/package-lock.json }
+      # the coordinator imports the kernel source through an alias, so the kernel needs no install of its own here
+      - run: npm ci
+        working-directory: coordinator
+      - run: npm run typecheck
+        working-directory: coordinator
+      - run: npm run lint
+        working-directory: coordinator
+      - run: npm test
+        working-directory: coordinator
   checklist:
     runs-on: ubuntu-latest
     steps:

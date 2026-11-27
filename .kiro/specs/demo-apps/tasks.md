@@ -27,8 +27,9 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Membership with fencing by author and cutoff, Stage 1 GC with log redaction (D-A), `CRDT.updateMembership`, `updateStableFrontier`, queries, and the property tests.
   - Tracked in `.kiro/specs/crdt-kernel/tasks.md`.
 
-- [ ] DA-3. **Coordinator core** (D3, D4; R5)
-  - `coordinator/src/core.ts`, pure and unit-tested: `onHello`, `frontier`, `evict`.
+- [x] DA-3. **Coordinator core** (D3, D4; R5)
+  - Done: `coordinator/src/core.ts` (`CoordinatorCore`: `onHello`, `startEviction`, `onPrepared`, `abortEviction`, `getStatus`), pure (checked by `scripts/check-purity.mjs`), 104 tests including 8 that drive it with real kernel replicas (stall, exorcise, reclaim, fence, a live target, lost messages), 45 mutants caught.
+  - Not here yet: the adapters that turn effects into messages (DA-4, DA-5).
   - Dependencies: DA-2.
 
 - [ ] DA-4. **Wire v2 and `pause()`** (D3, D5; R3, R5)

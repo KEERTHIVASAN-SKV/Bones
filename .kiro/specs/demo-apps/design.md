@@ -24,10 +24,13 @@ The coordinator logic is a **pure core** with two thin adapters (S6):
 
 Rules:
 
-- A **hello** is the acknowledgement of a member's version vector. A hello from an unknown, not-evicted replica adds it to the active set (epoch + 1). A hello from an evicted replica is answered with a rejection carrying the current epoch.
+- A **hello** is the acknowledgement of a member's version vector. A hello from an unknown, not-evicted replica adds it to the active set (epoch + 1). A hello from an evicted replica is answered with a rejection carrying the current epoch. A hello at a stale epoch is NOT an acknowledgement: it is answered with the current view. No replica is joined while an eviction is being prepared (a newcomer was not asked to freeze the target); it retries on its next hello.
 - `frontier` is the kernel's `stableFrontier` over **active members only**, with an empty vector for a member that has not acknowledged.
-- `evict(target)` is manual. The cutoff is `max` over the survivors' acknowledged contiguous seq for the target, never derived from time. The kernel spec (section 10) describes the two phases; the reconciliation barrier (survivors backfill and confirm before the eviction is called complete) lives in the coordinator, never in the kernel.
-- No automatic eviction.
+- Eviction is manual and two-phase (kernel spec, section 10.3). `startEviction(target)` asks the survivors to freeze the target; each survivor calls `crdt.holdAuthor(target)` and replies with the contiguous seq it returns; when every survivor has replied the cutoff is the **max** of the replies (never derived from time) and the view is published. The eviction is then **pending** until every active member's acknowledged vector holds the target's operations up to the cutoff. That hello **is** the `evict-confirm`, so there is no confirm message; `getStatus` lists who is still backfilling. The first reply of a survivor wins, so a repeated reply cannot inflate the cutoff.
+- `abortEviction()` backs out of a prepare that cannot finish (a stalled survivor): the survivors release the target and the operator can exorcise the stalled one instead.
+- Retries need no timers in the core: a survivor that has not replied is asked again when it says hello, and the frontier is re-broadcast on a hello at most every `frontierResendMs` (default 3 s), so a lost message cannot strand garbage collection.
+- No automatic eviction. A member that has been silent is only shown as stalled.
+- Limits: the core keeps its state in memory, so reloading the control page resets the coordinator (open tabs keep their view; keep the control page open). A tab that is reloaded gets a new replica ID and leaves its old ID behind as a silent member that holds the frontier back until it is exorcised.
 
 ## Wire format v2
 
@@ -38,7 +41,13 @@ Every message is a JSON string. Everything received is untrusted: parsed in `try
 { t: 'hello',    from: '<replicaId>', epoch: <number>, vv: { <replicaId>: <seq> } }   // also the ack
 { t: 'view',     view: <serialized membership view> }                                 // from the coordinator
 { t: 'frontier', epoch: <number>, vv: { <replicaId>: <seq> } }                        // from the coordinator
+{ t: 'prepare',  target: '<replicaId>', epoch: <number> }                             // from the coordinator: survivors freeze the target
+{ t: 'prepared', from: '<replicaId>', target: '<replicaId>', epoch: <number>, seq: <number> }   // a survivor's reply
+{ t: 'release',  target: '<replicaId>' }                                              // from the coordinator: an eviction was aborted
+{ t: 'rejected', to: '<replicaId>', epoch: <number> }                                 // from the coordinator: a control message was refused
 ```
+
+`prepare`, `prepared` and `release` are additions to the Nov 26 plan's list of messages. Requirement 10.3 and KER-77 need a prepare round (the survivors must freeze the target and report their seq, otherwise a live target splits them), and the plan's `hello` cannot carry that. There is still no separate confirm message.
 
 - A tab applies a `view` with `crdt.updateMembership(view)` (ignores a non-increasing epoch) and a `frontier` with `crdt.updateStableFrontier(vv)` **only if** its epoch equals the tab's current epoch (kernel requirement 11.8).
 - Control messages are fenced by epoch and membership, edit operations by author and cutoff. The two mechanisms are never mixed (kernel requirement 10.0).
