@@ -10,6 +10,9 @@ import {
   encodePrepared,
   encodeRejected,
   encodeRelease,
+  encodeSnapshot,
+  encodeSnapshotRequest,
+  MAX_SNAPSHOT_CHARS,
   encodeView,
 } from './protocol';
 
@@ -62,5 +65,28 @@ describe('decode ignores anything that is not a well-formed message, and never t
   it.each(BAD.map((m) => [m]))('%j', (message) => {
     expect(() => decode(message)).not.toThrow();
     expect(decode(message)).toBeNull();
+  });
+});
+
+describe('rejoin messages: snapshot-request and snapshot', () => {
+  it('encode then decode gives the same message back', () => {
+    expect(decode(encodeSnapshotRequest('tab-1a2b3c4d.0'))).toEqual({ t: 'snapshot-request', from: 'tab-1a2b3c4d.0' });
+    expect(decode(encodeSnapshot('tab-1a2b3c4d.0', '{"x":1}'))).toEqual({ t: 'snapshot', to: 'tab-1a2b3c4d.0', snap: '{"x":1}' });
+  });
+  it('malformed ones are ignored: a bad or missing ID, a snapshot that is not a non-empty string, or one that is too long', () => {
+    for (const bad of [
+      '{"t":"snapshot-request"}',
+      '{"t":"snapshot-request","from":"bad:id"}',
+      '{"t":"snapshot-request","from":7}',
+      '{"t":"snapshot","snap":"{}"}',
+      '{"t":"snapshot","to":"bad:id","snap":"{}"}',
+      '{"t":"snapshot","to":"a.0"}',
+      '{"t":"snapshot","to":"a.0","snap":""}',
+      '{"t":"snapshot","to":"a.0","snap":{"x":1}}',
+      JSON.stringify({ t: 'snapshot', to: 'a.0', snap: 'x'.repeat(MAX_SNAPSHOT_CHARS + 1) }),
+    ]) {
+      expect(decode(bad)).toBeNull();
+    }
+    expect(decode(JSON.stringify({ t: 'snapshot', to: 'a.0', snap: 'x'.repeat(MAX_SNAPSHOT_CHARS) }))).not.toBeNull();
   });
 });

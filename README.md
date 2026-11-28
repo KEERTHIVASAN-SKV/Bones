@@ -19,10 +19,10 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 | Kernel eviction prepare phase (`holdAuthor`), snapshots and rejoin as a new incarnation (KER-027 to KER-033) | done, tested, mutation-checked |
 | Gate A property tests: frontier safety, GC safety including the redacted log, fencing, snapshot rejoin (22 + 6 properties) | done, seeded |
 | `coordinator/` | the pure decision core (membership, frontier, manual two-phase eviction) is built and tested (116 tests, including a whole-stack test that runs real replicas and the core over a lossy network with a stalled replica and an eviction); it runs in the browser on the Checklist's control page. No Node service |
-| `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons (207 tests; the demo script D1 to D5 passed on the deployed site in real Edge, driven by a script). Live at the URL above. Rejoin is not built in the app yet |
+| `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons, and a **Rejoin** button for an exorcised tab (219 tests). The demo script D1 to D5 passed on the deployed site in real Edge, driven by a script. D6 (Rejoin, two cycles) passed the same way on a local build of the Pages artifact; it is on the live site once the next push has deployed. Live at the URL above |
 | `apps/graveyard-whiteboard` | placeholder (the second app folder the Skeleton Crew category requires) |
 
-Replicas exchange operations and converge, a stalled replica holds back garbage collection, a manual eviction lets it move, the evicted replica's later edits are refused, and a returning replica rejoins from a snapshot under a new ID (see the examples below). What is NOT done yet: the Rejoin button in the app, the second app, the demo video and the write-up. Numbers are in [STATUS.md](STATUS.md).
+Replicas exchange operations and converge, a stalled replica holds back garbage collection, a manual eviction lets it move, the evicted replica's later edits are refused, and a returning replica rejoins from a snapshot under a new ID (see the examples below). What is NOT done yet: the second app, the demo video and the write-up. Numbers are in [STATUS.md](STATUS.md).
 
 ## Run it
 
@@ -63,7 +63,7 @@ Allowed claims, from the project spec (section 3.4):
 - The kernel is tested with seeded property-based tests (fast-check) and hand-run mutation checks. `design.md` specifies 18 properties; eight property groups are implemented (see STATUS.md for which ones and why the rest were collapsed).
 - It aims to make tombstone reclamation, membership and fencing visible (the Graveyard panel in the apps).
 - It uses a small coordinator for membership and compaction authorization; edits are peer-to-peer. (Built as a pure core that runs on the Checklist's control page; there is no standalone service.)
-- Evicted peers must rejoin from a snapshot, as a new replica. (Built in the kernel; the Rejoin button in the app is not.)
+- Evicted peers must rejoin from a snapshot, as a new replica. (Built in the kernel, and in the Cursed Checklist as the Rejoin button: a surviving tab sends a snapshot, the exorcised tab validates it and restarts as the next incarnation of its ID, for example `tab-1a2b3c4d.0` to `tab-1a2b3c4d.1`. The edits it made after its cutoff are discarded.)
 
 It is **not** a new CRDT algorithm, **not** production-ready, **not** a replacement for Yjs, Automerge or Loro, **not** fully decentralized (membership needs the coordinator), and **not** formally proven correct.
 

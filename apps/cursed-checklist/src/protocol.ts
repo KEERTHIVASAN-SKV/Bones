@@ -11,6 +11,8 @@
  *   { t: 'prepared', from, target, epoch, seq }                                     a survivor's reply (its frozen seq)
  *   { t: 'release',  target }                                                       coordinator: an eviction was aborted
  *   { t: 'rejected', to, epoch }                                                    coordinator: a control message was refused
+ *   { t: 'snapshot-request', from }                                                an exorcised tab asks to rejoin (`from` = its old ID)
+ *   { t: 'snapshot', to, snap: '<serializeSnapshot output>' }                      a surviving tab's answer, addressed to the old ID
  *
  * `decode` never throws: anything that is not a well-formed message returns null. `from` and
  * `epoch` of a hello are optional on receive (a peer answers a hello with catch-up operations
@@ -38,7 +40,16 @@ export type Incoming =
   | { t: 'prepare'; target: string; epoch: number }
   | { t: 'prepared'; from: string; target: string; epoch: number; seq: number }
   | { t: 'release'; target: string }
-  | { t: 'rejected'; to: string; epoch: number };
+  | { t: 'rejected'; to: string; epoch: number }
+  | { t: 'snapshot-request'; from: string }
+  | { t: 'snapshot'; to: string; snap: string };
+
+/**
+ * Longest snapshot string accepted (characters). A snapshot is validated in full by the kernel
+ * (`deserializeSnapshot`) before it is used; this only stops an absurdly large string from being
+ * handed to that validator at all.
+ */
+export const MAX_SNAPSHOT_CHARS = 5_000_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -101,6 +112,12 @@ export function decode(message: unknown): Incoming | null {
         return { t: 'release', target: need(wire.target, isId, 'target') };
       case 'rejected':
         return { t: 'rejected', to: need(wire.to, isId, 'to'), epoch: need(wire.epoch, isCount, 'epoch') };
+      case 'snapshot-request':
+        return { t: 'snapshot-request', from: need(wire.from, isId, 'from') };
+      case 'snapshot': {
+        const snap = need(wire.snap, (v): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_SNAPSHOT_CHARS, 'snap');
+        return { t: 'snapshot', to: need(wire.to, isId, 'to'), snap };
+      }
       default:
         return null;
     }
@@ -127,3 +144,7 @@ export const encodePrepared = (from: string, target: string, epoch: number, seq:
 export const encodeRelease = (target: string): string => JSON.stringify({ t: 'release', target });
 
 export const encodeRejected = (to: string, epoch: number): string => JSON.stringify({ t: 'rejected', to, epoch });
+
+export const encodeSnapshotRequest = (from: string): string => JSON.stringify({ t: 'snapshot-request', from });
+
+export const encodeSnapshot = (to: string, snap: string): string => JSON.stringify({ t: 'snapshot', to, snap });

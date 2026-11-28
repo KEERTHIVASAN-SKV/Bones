@@ -57,8 +57,10 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Gate B evidence, 2026-11-28: the whole demo D1 to D5 was run against the deployed URL in Microsoft Edge (Chromium), driven by a script (headless, not a person watching windows): 21 of 21 checks passed. A manual run in three real windows is still to do for the video.
   - Dependencies: DA-1.
 
-- [ ] DA-9. **Snapshot and Rejoin** (D6; R7; Gate C)
+- [x] DA-9. **Snapshot and Rejoin** (D6; R7; Gate C)
   - Kernel snapshot tasks KER-027 to KER-029, `CRDT.snapshot()`, `CRDT.fromSnapshot(snapshot, newReplicaId)`, UI Rejoin button.
+  - Done (2026-11-28): `rejoin.ts`, `rejoinSession.ts`, the two wire messages in `protocol.ts`, the Rejoin banner in `App.tsx`; see the Rejoin bullet in `STATUS.md`. 12 new tests (219 in the app), 35 mutants caught. Demo D6 in real Edge, driven by a script, on a local build of the Pages artifact: 39 of 39 checks, two cycles (`.0` to `.1` to `.2`), same list, edits accepted again.
+  - **Gate C is NOT yet met on the deployed URL:** the live site still serves `b7c6bbf`, which has no Rejoin. After the next push has deployed, run D6 on the live site and record it.
   - Dependencies: DA-2, DA-6.
 
 - [ ] DA-10. **Benchmark** (D7; R10)

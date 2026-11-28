@@ -6,14 +6,17 @@
  * Importing this file starts syncing, so only the app entry (App.tsx) imports it; tests build
  * their own replicas with `createReplica` and `startSync`.
  */
-import { createReplica } from './replica';
+import { createSessionReplica, getSessionStore } from './rejoinSession';
 import { startSync } from './sync';
 import { createBroadcastTransport } from './transport';
 
 const transport = createBroadcastTransport();
 
-/** The CRDT of this tab. */
-export const crdt = createReplica();
+/**
+ * The CRDT of this tab: a new random replica ID, unless this page load follows a Rejoin, in which
+ * case it is restored from the snapshot the old page stored (rejoinSession.ts).
+ */
+export const crdt = createSessionReplica(getSessionStore());
 
 /** Broadcasts this tab's operations and answers other tabs' hellos. */
 export const sync = startSync(crdt, transport);

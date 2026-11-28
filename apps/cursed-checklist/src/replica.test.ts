@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { isValidReplicaId } from '@bones/kernel';
-import { createReplica, isItem, MAX_ITEM_LENGTH, newReplicaId, visibleItems } from './replica';
+import { createReplica, isItem, MAX_ITEM_LENGTH, newReplicaId, nextIncarnation, visibleItems } from './replica';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -99,5 +99,18 @@ describe('visibleItems (what the UI renders)', () => {
     c.insert(undefined, { text: 'ok' });
     expect(visibleItems(c).map((e) => e.value.text)).toEqual(['ok']);
     expect(c.getSequence()).toHaveLength(3); // still in the structure: later ops anchored on them still apply
+  });
+});
+
+describe('nextIncarnation (the ID a tab takes when it rejoins)', () => {
+  it('is the same site with the incarnation number one higher, and is a valid replica ID', () => {
+    expect(nextIncarnation('tab-1a2b3c4d.0')).toBe('tab-1a2b3c4d.1');
+    expect(nextIncarnation('tab-1a2b3c4d.9')).toBe('tab-1a2b3c4d.10');
+    expect(isValidReplicaId(nextIncarnation('tab-1a2b3c4d.41'))).toBe(true);
+  });
+  it('falls back to a fresh random ID when the old one has no .<number> ending or the number cannot go up', () => {
+    for (const odd of ['plain', 'tab-1a2b3c4d.x', 'tab-1a2b3c4d.', `tab-1a2b3c4d.${Number.MAX_SAFE_INTEGER}`]) {
+      expect(nextIncarnation(odd)).toMatch(/^tab-[0-9a-f]{8}\.0$/);
+    }
   });
 });

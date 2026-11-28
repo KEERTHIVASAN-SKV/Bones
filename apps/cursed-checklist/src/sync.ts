@@ -16,6 +16,10 @@
  * `prepared` reply, `release` -> `crdt.releaseAuthor`. Any script on the same origin can post
  * these, so the app assumes honest peers (see the README).
  *
+ * Rejoin: `snapshot-request` and `snapshot` are tab-to-tab messages, handled by rejoin.ts (a
+ * surviving tab answers an exorcised tab's request with a snapshot; the exorcised tab keeps the
+ * first valid answer). The coordinator ignores them.
+ *
  * Pause (the demo's "stall"): a paused tab sends nothing and hears nothing, but its local edits
  * keep working and are counted. `resume()` sends them, then says hello.
  *
@@ -32,6 +36,8 @@ import {
   encodePrepared,
 } from './protocol';
 import type { Incoming } from './protocol';
+import { createRejoin } from './rejoin';
+import type { RejoinStatus } from './rejoin';
 import type { Transport } from './transport';
 
 /** How often a replica announces its version vector. */
@@ -50,6 +56,12 @@ export interface SyncStats {
   fenced: Record<string, number>;
 }
 
+/** Optional settings for {@link startSync}. */
+export interface SyncOptions {
+  /** A number in [0, 1) for the random wait before answering a rejoin request. Defaults to `Math.random`. */
+  random?: () => number;
+}
+
 /** The handle returned by {@link startSync}. */
 export interface Sync {
   /**
@@ -65,7 +77,15 @@ export interface Sync {
   isPaused(): boolean;
   /** A fresh copy of the counters the panel shows. */
   getStats(): SyncStats;
-  /** Call `listener` when the stats change (pause, resume, a new refused operation). Returns an unsubscribe function. */
+  /**
+   * Rejoin (exorcised tabs only): ask the tabs that are still members for a snapshot. The result
+   * shows up in {@link Sync.getRejoin}; see rejoin.ts. Returns false and sends nothing if this tab
+   * is not evicted, is paused, or was stopped.
+   */
+  requestRejoin(): boolean;
+  /** Where this tab's rejoin request stands (`idle` until `requestRejoin` is called). */
+  getRejoin(): RejoinStatus;
+  /** Call `listener` when the stats or the rejoin status change (pause, resume, a new refused operation). Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /** Stop the hello timer and the message handler. Safe to call twice. Does NOT close the transport. */
   stop(): void;
@@ -81,13 +101,15 @@ export interface Sync {
  * @param crdt - This tab's replica
  * @param transport - Where messages go; the caller owns it and closes it
  * @param intervalMs - Time between hellos (default {@link HELLO_INTERVAL_MS})
+ * @param options - Optional settings (the randomness used to space out rejoin answers)
  * @returns A handle to broadcast local operations, pause, and stop
  * @throws RangeError if `intervalMs` is not a positive finite number
  */
 export function startSync<T>(
   crdt: CRDT<T>,
   transport: Transport,
-  intervalMs: number = HELLO_INTERVAL_MS
+  intervalMs: number = HELLO_INTERVAL_MS,
+  options: SyncOptions = {}
 ): Sync {
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     throw new RangeError(`startSync: intervalMs must be a positive number, got ${String(intervalMs)}`);
@@ -122,6 +144,14 @@ export function startSync<T>(
     if (paused) return;
     trySend(() => encodeHello(crdt.replicaId, crdt.getMembershipView().epoch, crdt.getVV()));
   };
+  /** Rejoin (see rejoin.ts): answering other tabs' requests, and asking when this tab was exorcised. */
+  const rejoin = createRejoin({
+    crdt,
+    send: (message) => trySend(() => message),
+    isPaused: () => paused,
+    notify,
+    random: options.random ?? Math.random,
+  });
 
   const countFenced = (op: Operation<unknown>): void => {
     if (fencedIds.has(op.id) || fencedIds.size >= MAX_FENCED_REMEMBERED) return;
@@ -157,6 +187,12 @@ export function startSync<T>(
       }
       case 'release':
         crdt.releaseAuthor(msg.target);
+        return;
+      case 'snapshot-request':
+        rejoin.onRequest(msg.from);
+        return;
+      case 'snapshot':
+        rejoin.onSnapshot(msg.to, msg.snap);
         return;
       default:
         return; // 'prepared' and 'rejected' are for the coordinator
@@ -206,6 +242,8 @@ export function startSync<T>(
     },
     isPaused: () => paused,
     getStats: () => ({ paused, unsent: unsent.size, fenced: Object.fromEntries(fencedByAuthor) }),
+    requestRejoin: () => rejoin.request(),
+    getRejoin: () => rejoin.status(),
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -216,6 +254,7 @@ export function startSync<T>(
       if (stopped) return;
       stopped = true;
       clearInterval(timer);
+      rejoin.stop();
       unsubscribe();
       listeners.clear();
     },

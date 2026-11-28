@@ -1059,7 +1059,8 @@ Applications (KER-078 to KER-080)
   - **Dependencies**: KER-064
   - **Validation**: Integration test passes
 
-- [ ] 68. **Snapshot + Rejoin Scenario** (KER-68)
+- [x] 68. **Snapshot + Rejoin Scenario** (KER-68)
+  - **Status note**: done. Kernel: CRDT.snapshot and CRDT.fromSnapshot, with 6 snapshot-rejoin properties (snapshot plus later operations, in any order and redelivered, equals the replica that stayed connected, with and without GC). Whole scenario with real replicas and the real coordinator, in apps/cursed-checklist/src/rejoin.test.ts: three replicas with operations, one stalled and exorcised, a survivor snapshots, the exorcised tab restarts from it under a new ID (c.0 to c.1), post-snapshot operations flow both ways and all tabs converge, then a SECOND cycle (c.1 to c.2). The same scenario passed in real Edge (39 of 39 checks). The restored replica starts with an empty log (a documented limitation).
   - Set up 3 replicas with operations
   - Take snapshot at Replica 1
   - Simulate new Replica 2 joining via snapshot

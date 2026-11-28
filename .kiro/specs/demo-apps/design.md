@@ -45,7 +45,11 @@ Every message is a JSON string. Everything received is untrusted: parsed in `try
 { t: 'prepared', from: '<replicaId>', target: '<replicaId>', epoch: <number>, seq: <number> }   // a survivor's reply
 { t: 'release',  target: '<replicaId>' }                                              // from the coordinator: an eviction was aborted
 { t: 'rejected', to: '<replicaId>', epoch: <number> }                                 // from the coordinator: a control message was refused
+{ t: 'snapshot-request', from: '<old replicaId>' }                                    // an exorcised tab asks to rejoin
+{ t: 'snapshot', to: '<old replicaId>', snap: '<serializeSnapshot output>' }          // a surviving tab's answer
 ```
+
+**Rejoin (DA-9).** `snapshot-request` and `snapshot` go tab to tab; the coordinator ignores them. A tab answers only if it is an active member in its own view, is not paused, and its view shows the requester as evicted. It waits a random 0 to 300 ms and drops its answer if it hears another answer to the same requester first. The requester validates the first answer with `deserializeSnapshot` (the kernel checks everything; the snapshot came from another script) and requires it to show its own old ID as evicted; it then stores the string in `sessionStorage` and reloads. At startup the page restores it with `CRDT.fromSnapshot(snapshot, nextIncarnation(oldId))` (`tab-1a2b3c4d.0` becomes `.1`), after removing the stored copy, and the new ID joins through its first hello, like any new tab. Rejected: swapping the `crdt` object under React while the page runs. No kernel or coordinator change.
 
 `prepare`, `prepared` and `release` are additions to the Nov 26 plan's list of messages. Requirement 10.3 and KER-77 need a prepare round (the survivors must freeze the target and report their seq, otherwise a live target splits them), and the plan's `hello` cannot carry that. There is still no separate confirm message.
 

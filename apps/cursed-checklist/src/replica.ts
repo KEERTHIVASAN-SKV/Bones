@@ -1,4 +1,4 @@
-import { CRDT } from '@bones/kernel';
+import { CRDT, isValidReplicaId } from '@bones/kernel';
 import type { Element } from '@bones/kernel';
 
 /** A checklist item: the value stored in each CRDT element. */
@@ -24,6 +24,27 @@ export function newReplicaId(): string {
   let hex = '';
   for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
   return `tab-${hex}.0`;
+}
+
+/**
+ * The ID a tab takes when it rejoins after being exorcised: the next incarnation of its old one
+ * (`tab-1a2b3c4d.0` becomes `tab-1a2b3c4d.1`). The old ID stays evicted for good and the new one
+ * starts its own sequence at 1, so no Op ID is ever reused.
+ *
+ * @param replicaId - The exorcised tab's ID
+ * @returns The next incarnation, or a fresh random ID if `replicaId` does not end in `.<number>`
+ *   (or the next number is not a safe integer)
+ */
+export function nextIncarnation(replicaId: string): string {
+  const match = /^(.+)\.(\d+)$/.exec(replicaId);
+  if (match !== null) {
+    const next = Number(match[2]) + 1;
+    if (Number.isSafeInteger(next)) {
+      const id = `${match[1]}.${next}`;
+      if (isValidReplicaId(id)) return id;
+    }
+  }
+  return newReplicaId();
 }
 
 /**
