@@ -8,11 +8,13 @@ Live site: <https://keerthivasan-skv.github.io/Bones/> (Cursed Checklist at `/cu
 
 | Gate | State | Evidence |
 |------|-------|----------|
-| A: kernel safety | passed | `node scripts/quality-gate.mjs` (purity, typecheck, lint, 702 tests); 28 property tests for frontier, GC, fencing and snapshot rejoin; a 12-seed whole-stack test (coordinator, real replicas, lossy network, stall and eviction) |
+| A: kernel safety (kernel frozen: tag `kernel-freeze`, only bug fixes in `kernel/src` from here) | passed | `node scripts/quality-gate.mjs` (purity, typecheck, lint, 702 tests); 28 property tests for frontier, GC, fencing and snapshot rejoin; a 12-seed whole-stack test (coordinator, real replicas, lossy network, stall and eviction) |
 | B: the story works | passed on the deployed URL (see Deploy below) | 2026-11-28, Microsoft Edge (Chromium) driven by a script: demo D1 to D5, 21 of 21 checks, against the site built from `b7c6bbf` |
 | C: rejoin | built; passed on a LOCAL build of the Pages artifact, not yet on the deployed URL | `CRDT.fromSnapshot` and 6 snapshot-rejoin properties; the Rejoin button (DA-9); demo D6 in real Edge, driven by a script, two cycles (`.0` to `.1` to `.2`), 39 of 39 checks. The live site still serves `b7c6bbf`, which has no Rejoin: Gate C is met on the deployed URL only after the next push has deployed and D6 has been run there |
 | D: second app | not started | `apps/graveyard-whiteboard/` has only a `package.json` and a README |
 | E: package | not started | demo video, README pass, write-up, blog, social post |
+
+Fresh-clone check of `ed749ee` (2026-11-28; the three CI jobs, run from a clean `git clone` with `npm ci`, so nothing from the working tree can hide a problem): kernel quality gate passes; coordinator typecheck, lint and 116 tests pass; app 219 tests, build and `npm audit` (0 vulnerabilities) pass; submission check passes. This is a local simulation: the workflows have not yet run on GitHub for the commits after `b7c6bbf`.
 
 This is the only status document. Older ones are in `docs/archive/` and are historical.
 
