@@ -1,6 +1,18 @@
 # Bones: Status
 
-Last updated: 2026-11-26 (after the CRDT pipeline, fixes F1 to F4 and the first working Cursed Checklist). Submission deadline: Dec 3, 2026.
+Last updated: 2026-11-28 (after the audit review: Gate B checked on the deployed site, stale documentation corrected). Submission deadline: Dec 3, 2026.
+
+Live site: <https://keerthivasan-skv.github.io/Bones/> (Cursed Checklist at `/cursed-checklist/`, control page at `/cursed-checklist/control.html`).
+
+## Gates
+
+| Gate | State | Evidence |
+|------|-------|----------|
+| A: kernel safety | passed | `node scripts/quality-gate.mjs` (purity, typecheck, lint, 702 tests); 28 property tests for frontier, GC, fencing and snapshot rejoin |
+| B: the story works | passed on the deployed URL (see Deploy below) | 2026-11-28, Microsoft Edge (Chromium) driven by a script: demo D1 to D5, 21 of 21 checks, against the site built from `b7c6bbf` |
+| C: rejoin | kernel done; the app's Rejoin button is not built | `CRDT.fromSnapshot` and 6 snapshot-rejoin properties; DA-9 open |
+| D: second app | not started | `apps/graveyard-whiteboard/` has only a `package.json` and a README |
+| E: package | not started | demo video, README pass, write-up, blog, social post |
 
 This is the only status document. Older ones are in `docs/archive/` and are historical.
 
@@ -17,7 +29,7 @@ npm run coverage    # writes kernel/coverage/coverage-final.json
 node ../scripts/quality-gate.mjs   # purity + typecheck + lint + tests
 ```
 
-Last verified run: typecheck, build, lint and purity clean; 701 tests pass; line coverage of `kernel/src` only is 99.29% (`crdt.ts` 99.27%, `rga.ts` 98.63%, `utils.ts` 97.95%, `events.ts` 97.5%; `buffer.ts`, `gc.ts`, `membership.ts`, `oplog.ts`, `snapshot.ts`, `vv.ts`, `index.ts` 100%). `src/types.ts` is excluded because it has no runtime code.
+Last verified run (2026-11-28): typecheck, build, lint and purity clean; 702 tests pass in 29 files; line coverage of `kernel/src` only is 99.29% (`crdt.ts` 99.27%, `rga.ts` 98.63%, `utils.ts` 97.95%, `events.ts` 97.5%; `buffer.ts`, `gc.ts`, `membership.ts`, `oplog.ts`, `snapshot.ts`, `vv.ts`, `index.ts` 100%). `src/types.ts` is excluded because it has no runtime code.
 
 ## Cursed Checklist (`apps/cursed-checklist`, KER-080)
 
@@ -32,13 +44,13 @@ Last verified run: 207 tests pass, `tsc` clean, build succeeds, `npm audit` repo
 
 - **Works:** add, complete (= delete, leaves a tombstone), sync across tabs of one browser, catch-up through a hello every 3 s.
 - **Wire v2 (DA-4):** `protocol.ts` parses and encodes every message in one place; `hello` carries `from` and `epoch`; `sync.ts` carries `view`, `frontier`, `prepare` and `release` to the kernel, replies to `prepare` with the frozen seq, and has `pause()`/`resume()` (a stalled tab sends and hears nothing, its edits are counted and sent on resume) plus a per-author count of operations refused by fencing. 55 new tests, 42 mutants caught; the three-tab Edge check was re-run on the rebuilt app (16 of 16). The control page (below) sends them.
-- **Not built:** rejoin (snapshots), the Whiteboard, a deployed URL, other browsers or devices, persistence. Limits are listed in the app README.
+- **Not built:** the Rejoin button in the app (the kernel side, snapshots, is done), the Whiteboard, other browsers or devices, persistence. Limits are listed in the app README.
 - **S4 scope collapse (Nov 26, collapsed for schedule):** the unit-test group (KER-038 to KER-47) is not tracked separately because each module ships with its tests; the property-test group (KER-48 to KER-65, the 18 properties in `design.md`) is reduced to 8 properties (convergence, idempotence, VV contiguity, delete-before-insert, frontier safety, GC safety, fencing, snapshot rejoin); the network simulator (KER-034) is replaced by seeded shuffle/duplicate helpers inside the tests; integration tests (KER-66 to KER-70) are reduced to two; documentation tasks (KER-71 to KER-74) are covered by the README, `design.md` and this file instead of separate documents. The task IDs here are checked against `tasks.md`: the plan text gave KER-047 to KER-064, KER-065 to KER-069 and KER-070 to KER-073, which are one lower than the headers in this repo.
 - **Finding (A5):** the document asked for `vitest` 5.1.1. That release was 8 days old on Nov 26, which fails the document's own two-week rule. Also, with npm 10.9.2, every `vitest` 4.1.x and 5.x release except 5.1.2 (1 day old) crashed the dependency resolver (`Cannot read properties of null (reading 'edgesOut')`). Chosen: `vitest` 5.1.0 (23 days old) with `legacy-peer-deps=true` in `apps/cursed-checklist/.npmrc`; `npm ci` works and `npm audit` is clean. `vitest` 4.0.18 was rejected (critical advisory).
 - **CI:** the `checklist` job runs on Node 22 (Vitest 5 needs `^22.12 || ^24 || >=26`); the `kernel` job now runs on Node 22 as well, so both jobs match (the kernel itself still only needs Node 20 or newer). Both jobs were simulated from a fresh clone of `4c0989e` (kernel gate; app `npm ci`, `npm test`, `npm run build`, `npm audit`; all exit 0).
 - **Control page (DA-5):** `control.html` is a second entry of the same Vite build (same origin as the app, so it shares the channel). `coordinatorAdapter.ts` runs the pure core with an injected clock; `ControlApp.tsx` lists members (last heard, silent flag), the epoch and frontier, an **Exorcise** button per member, **Abort** while an eviction is being prepared, and each exorcised tab with its cutoff and whether every tab holds its operations. The app page shows a banner when its tab was exorcised and a notice instead of crashing when an edit is refused. 17 adapter tests (4 drive the real tab code on one bus), 22 mutants caught. A throwaway real-Edge check with the control page and three tabs passed 15 of 15 (join, epoch 3 then 4, Exorcise, cutoff, banner, refused edit, survivors still sync, no console errors). It exorcises a LIVE tab: the Stall button is DA-6, so stall-then-exorcise has only been run against the real tab code, not in a browser.
-- **Graveyard panel, Stall and Stress (DA-6, DA-7):** `panel.ts` computes the numbers (`panelModel`) and runs the stress (`runStress`: 200 items of 100 characters, then buried, through the normal path); `GraveyardPanel.tsx` renders them with the labels `tombstones (structure kept)`, `payload bytes reclaimed`, `stable frontier`, `epoch`, `members`, `evicted`, plus the Stall/Resume and Stress buttons; a survivor's panel counts the operations it refused from an exorcised tab. 11 panel tests, 20 mutants caught. **A throwaway real-Edge check of the whole demo script D1 to D5 (control page plus three windows) passed 21 of 21**: with C stalled, payload bytes reclaimed stayed 0 on A and B after a 200-item stress run; after Exorcise it jumped to 22,200 with "200 of 200" payloads reclaimed while the tombstone count stayed 200; C resumed, learned it was exorcised, and A and B each showed "Refused 1 operation". Stall C BEFORE pressing Stress when recording, or the zeros never show.
-- **Deploy (DA-8): built, not live.** `.github/workflows/pages.yml` builds and tests the app with `BASE_PATH=/<repo>/cursed-checklist/`, `scripts/assemble-site.mjs` lays out `_site/` (one folder per built app plus a landing page, fails if nothing was built), and the official Pages actions publish it (steps checked against the current GitHub documentation; the workflow parses, but has NOT run on GitHub). The artifact it would publish was built and served under `/Bones/` locally and passed the whole demo D1 to D5 three times in a row in real Edge (21 of 21 each). **To go live the repository owner must set Settings, Pages, Source to "GitHub Actions" and push to `main`.** Until then there is no public URL: Gate B is not fully met.
+- **Graveyard panel, Stall and Stress (DA-6, DA-7):** `panel.ts` computes the numbers (`panelModel`) and runs the stress (`runStress`: 200 items of 100 characters, then buried, through the normal path); `GraveyardPanel.tsx` renders them with the labels `tombstones (structure kept)`, `estimated payload bytes reclaimed` (renamed on Nov 28: the number is the JSON length of the payloads, not memory), `stable frontier`, `epoch`, `members`, `evicted`, plus the Stall/Resume and Stress buttons; a survivor's panel counts the operations it refused from an exorcised tab. 11 panel tests, 20 mutants caught. **A throwaway real-Edge check of the whole demo script D1 to D5 (control page plus three windows) passed 21 of 21**: with C stalled, payload bytes reclaimed stayed 0 on A and B after a 200-item stress run; after Exorcise it jumped to 22,200 with "200 of 200" payloads reclaimed while the tombstone count stayed 200; C resumed, learned it was exorcised, and A and B each showed "Refused 1 operation". Stall C BEFORE pressing Stress when recording, or the zeros never show.
+- **Deploy (DA-8): live.** `.github/workflows/pages.yml` builds and tests the app with `BASE_PATH=/<repo>/cursed-checklist/`, `scripts/assemble-site.mjs` lays out `_site/` (one folder per built app plus a landing page, fails if nothing was built), and the official Pages actions publish it. The GitHub Actions API shows the `pages` workflow and `ci` both completed with `success` on `main` at `b7c6bbf` (2026-11-27, 13:27 UTC). **Gate B, checked on the deployed URL on 2026-11-28:** `https://keerthivasan-skv.github.io/Bones/`, `/cursed-checklist/` and `/cursed-checklist/control.html` answer 200 and every JS asset they reference loads under `/Bones/cursed-checklist/assets/`. The whole demo D1 to D5 was run against that URL in Microsoft Edge (Chromium), driven by a throwaway script that is not in the repo: 21 of 21 checks passed (with C stalled, 0 estimated payload bytes reclaimed after a 200-item stress run; after Exorcise 22,200 and "200 of 200" payloads reclaimed while the tombstone count stayed 200; C's edit after resuming was refused and both survivors showed it; no page or console errors). It was a headless script, not a person watching windows, so the manual run in three real windows for the video is still to do. A pull request that the GitHub Copilot cloud agent opened on Nov 27 about the Pages setup (#1) was closed without being merged; `main` has no change from it.
 - **Control page limits:** it IS the coordinator, so reloading it resets it (open tabs keep their view); a reloaded app tab leaves its old replica ID behind as a silent member that holds the frontier back until exorcised.
 - **Design choice:** `sync.ts` applies every valid operation and hides values that are not items at render time. Ignoring an operation with a bad value would leave a gap in its author's sequence and stall all later operations from that author.
 
@@ -134,18 +146,17 @@ The hooks run from the repo root (confirmed: the Stop hook found `scripts/` and 
 
 - `tasks.md`: list numbers 23 to 39 are one higher than their KER IDs; headers KER-40 to KER-80 are not 3-digit padded; dependency lines mix padded and unpadded IDs; the waves JSON has not been re-verified against the task bodies.
 - `requirements.md` headings skip number 16 (15 then 17); `design.md` "Validates" lines cite 16.x for the API requirement.
-- README does not mention Algorithm 4 or the `/apps` folders.
 - `npm audit` reports advisories in dev dependencies (not fixed; no `--force`).
 - `BONES_NEXT_STEPS.md` (the plan the schedule comes from) is not in the repo.
 - Fixed while building snapshots: `isValidReplicaId` accepted non-strings that the regex coerces to a match (`5`, `["a.0"]`, `true`), so `new CRDT(5)` and `CRDT.fromSnapshot(snap, 5)` did not throw. It now checks `typeof` first (tests added). Also fixed: `estimatePayloadSize` threw on a cyclic or BigInt payload (it is documented to return 0), which would have aborted a GC pass.
-- A replica restored from a snapshot starts a fresh operation log (design.md Algorithm 7), so it can only answer a hello with operations after the snapshot point. Snapshots are not built yet; this will be a README limitation.
+- A replica restored from a snapshot starts a fresh operation log (design.md Algorithm 7), so it can only answer a hello with operations after the snapshot point. Snapshots are built (KER-027 to KER-029); this is listed under the README's known limitations.
 
 ## Submission checklist (Devpost / Skeleton Crew)
 
 - [x] MIT `LICENSE` at repo root
 - [x] `.kiro/` committed (specs, steering, hooks); not gitignored
-- [x] Two separate app folders: `apps/graveyard-whiteboard` (placeholder), `apps/cursed-checklist` (first working version, no Graveyard panel yet)
-- [x] `coordinator/` folder (the pure core is built and tested; the adapters that connect it to the apps are not built yet)
+- [x] Two separate app folders: `apps/graveyard-whiteboard` (placeholder), `apps/cursed-checklist` (working: control page, Graveyard panel, Stall and Stress, deployed; no Rejoin button yet)
+- [x] `coordinator/` folder (the pure core is built and tested; the Checklist's control page is its browser adapter; there is no Node service)
 - [ ] Working kernel, two working apps, public URL(s)
 - [ ] Demo video, write-up covering specs, hooks and steering
 - [ ] README states limitations plainly: educational implementation, not production-ready, not a new algorithm, not a Yjs/Automerge/Loro replacement

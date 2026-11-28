@@ -52,9 +52,9 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Done: the survivors' panel shows "Refused N operations from <tab>: it was exorcised, and what it wrote beyond its cutoff is rejected" (counted once per distinct operation, from `sync.getStats().fenced`), and the exorcised tab shows a banner and a notice when an edit is refused. Covered by the DA-6 browser check (D5 steps).
   - Dependencies: DA-4, DA-6.
 
-- [ ] DA-8. **Early deploy** (all steps; R9; Gate B)
-  - Built, NOT yet live. `.github/workflows/pages.yml` (steps checked against the current GitHub Pages documentation: `configure-pages@v5`, `upload-pages-artifact@v4`, `deploy-pages@v4`, `pages: write` and `id-token: write` on the deploy job, the `github-pages` environment), `scripts/assemble-site.mjs` (one folder per built app plus a landing page; fails if nothing was built), and a validated `BASE_PATH` for the Vite `base`. The exact artifact the workflow would publish was built with `BASE_PATH=/Bones/cursed-checklist/`, served under `/Bones/` and passed the whole demo D1 to D5 three times in a row in real Edge (21 of 21 each).
-  - Still needed, by the repository owner: set Settings, Pages, Source to "GitHub Actions" and push to `main`. Until the workflow has run on GitHub nothing is deployed, so Gate B's "a deployed (public) URL exists" is NOT met, and the nightly check on the deployed URL cannot start.
+- [x] DA-8. **Early deploy** (all steps; R9; Gate B)
+  - Done and live at `https://keerthivasan-skv.github.io/Bones/` (app at `/cursed-checklist/`, control page at `/cursed-checklist/control.html`). `.github/workflows/pages.yml` (steps checked against the current GitHub Pages documentation: `configure-pages@v5`, `upload-pages-artifact@v4`, `deploy-pages@v4`, `pages: write` and `id-token: write` on the deploy job, the `github-pages` environment), `scripts/assemble-site.mjs` (one folder per built app plus a landing page; fails if nothing was built), and a validated `BASE_PATH` for the Vite `base`. The GitHub Actions API shows `pages` and `ci` completed with `success` on `main` at `b7c6bbf` (2026-11-27).
+  - Gate B evidence, 2026-11-28: the whole demo D1 to D5 was run against the deployed URL in Microsoft Edge (Chromium), driven by a script (headless, not a person watching windows): 21 of 21 checks passed. A manual run in three real windows is still to do for the video.
   - Dependencies: DA-1.
 
 - [ ] DA-9. **Snapshot and Rejoin** (D6; R7; Gate C)

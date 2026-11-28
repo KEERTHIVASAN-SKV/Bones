@@ -2,6 +2,8 @@
 
 A small, educational CRDT kernel: a Replicated Growable Array (RGA) with version vectors, membership and fencing, and tombstone reclamation, plus two demo apps. Built for the Kiroween 2026 hackathon (Skeleton Crew category) with spec-driven development in Kiro.
 
+**Live demo:** <https://keerthivasan-skv.github.io/Bones/>. The Cursed Checklist is at [`/cursed-checklist/`](https://keerthivasan-skv.github.io/Bones/cursed-checklist/) and its control page (the coordinator) at [`/cursed-checklist/control.html`](https://keerthivasan-skv.github.io/Bones/cursed-checklist/control.html). Open the control page in one window and the app in two more windows of the same browser (tabs sync through `BroadcastChannel`, so other browsers and devices are not connected). Without the control page open, nothing is reclaimed, and the app's panel says so.
+
 ## Status
 
 Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
@@ -11,16 +13,16 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 | Kernel setup, types, utilities, event emitter (KER-001 to KER-005) | done |
 | Kernel RGA: insert, delete and tombstones, sequence queries, payload reclamation primitive (KER-006 to KER-010) | done, with seeded property tests |
 | Kernel version-vector rules (`advanceContiguous`, `stableFrontier`), append-only op log with replay, dependency buffer (KER-011, 013 to 017) | done, tested; mutation-checked |
-| Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries (including `opsSince` for catch-up and `getAllElements` for tombstones), events, Lamport-time limit | working and tested; **fencing is a stub** (accepts everything) until membership exists |
+| Kernel `CRDT` class: local insert/delete, the `applyOp` pipeline (validation, duplicates, buffering, no-op handling, Lamport absorption, iterative unblocking), queries (including `opsSince` for catch-up and `getAllElements` for tombstones), events, Lamport-time limit | working and tested (fencing: see the membership row below) |
 | Kernel membership, epochs and fencing by author and cutoff (KER-018 to KER-022) | done, 108 tests, mutation-checked |
 | Kernel stable frontier, Stage 1 GC (payloads only; the tombstones stay) and the operation-log redaction that makes the freed memory real (KER-023 to KER-026) | done, tested, mutation-checked |
 | Kernel eviction prepare phase (`holdAuthor`), snapshots and rejoin as a new incarnation (KER-027 to KER-033) | done, tested, mutation-checked |
 | Gate A property tests: frontier safety, GC safety including the redacted log, fencing, snapshot rejoin (22 + 6 properties) | done, seeded |
 | `coordinator/` | the pure decision core (membership, frontier, manual two-phase eviction) is built and tested (104 tests); it runs in the browser on the Checklist's control page. No Node service |
-| `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons (207 tests; the demo script D1 to D5 passes in real browsers). Rejoin is not built; there is no public URL yet (the Pages workflow exists but has not run) |
+| `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons (207 tests; the demo script D1 to D5 passed on the deployed site in real Edge, driven by a script). Live at the URL above. Rejoin is not built in the app yet |
 | `apps/graveyard-whiteboard` | placeholder (the second app folder the Skeleton Crew category requires) |
 
-Replicas exchange operations and converge, a stalled replica holds back garbage collection, a manual eviction lets it move, the evicted replica's later edits are refused, and a returning replica rejoins from a snapshot under a new ID (see the examples below). What is NOT done yet: the Rejoin button in the app, the second app, a public URL, the demo video and the write-up. Numbers are in [STATUS.md](STATUS.md).
+Replicas exchange operations and converge, a stalled replica holds back garbage collection, a manual eviction lets it move, the evicted replica's later edits are refused, and a returning replica rejoins from a snapshot under a new ID (see the examples below). What is NOT done yet: the Rejoin button in the app, the second app, the demo video and the write-up. Numbers are in [STATUS.md](STATUS.md).
 
 ## Run it
 
@@ -58,7 +60,7 @@ Other kernel scripts (run inside `kernel/`): `npm run typecheck`, `npm run build
 Allowed claims, from the project spec (section 3.4):
 
 - A small, educational CRDT kernel.
-- The RGA is tested with seeded property-based tests (fast-check). More properties are specified and still to be written.
+- The kernel is tested with seeded property-based tests (fast-check) and hand-run mutation checks. `design.md` specifies 18 properties; eight property groups are implemented (see STATUS.md for which ones and why the rest were collapsed).
 - It aims to make tombstone reclamation, membership and fencing visible (the Graveyard panel in the apps).
 - It uses a small coordinator for membership and compaction authorization; edits are peer-to-peer. (Built as a pure core that runs on the Checklist's control page; there is no standalone service.)
 - Evicted peers must rejoin from a snapshot, as a new replica. (Built in the kernel; the Rejoin button in the app is not.)
@@ -118,7 +120,7 @@ bob.delete(i.id);                         // tombstone an element; returns the o
 bob.on('sequenceChanged', () => render());
 ```
 
-`applyOp` outcomes: `applied` (possibly unblocking buffered operations), `buffered` (a dependency is missing; never dropped, version vector not advanced), `duplicate`, `fenced` (not produced yet: fencing is a stub). Malformed operations throw `TypeError` and change nothing; that includes a Lamport time above `MAX_LAMPORT` (2^48), and a replica whose own clock reaches that limit refuses further local operations (`RangeError`). Use `deserializeOp` for operations received as JSON and `assertValidOperation` for any other untrusted operation.
+`applyOp` outcomes: `applied` (possibly unblocking buffered operations), `buffered` (a dependency is missing; never dropped, version vector not advanced), `duplicate`, `fenced` (the author was evicted and the operation is beyond its cutoff, or the author is not a member; nothing changes. A replica created without a membership view accepts every author). Malformed operations throw `TypeError` and change nothing; that includes a Lamport time above `MAX_LAMPORT` (2^48), and a replica whose own clock reaches that limit refuses further local operations (`RangeError`). Use `deserializeOp` for operations received as JSON and `assertValidOperation` for any other untrusted operation.
 
 Catch-up: a transport that does not replay old messages (for example `BroadcastChannel`) should have each replica send its version vector now and then and answer a peer's vector with `opsSince(thatVector)`. A peer holding buffered operations can only send what it has applied, so catching up can take more than one round; repeating the exchange converges.
 
@@ -138,7 +140,7 @@ alice.updateMembership(removeReplica(members, 'bob.0', seq));  // epoch 1; bob's
 // garbage collection: payloads (not tombstones) go once every member has applied the delete
 const frontier = computeStableFrontier(acks, new Set(['alice.0']));
 alice.updateStableFrontier(frontier, alice.getMembershipView().epoch);   // applied only at the current epoch
-alice.getGCStats();                                              // tombstoneCount stays; payloadsReclaimed and bytesSaved grow
+alice.getGCStats();                                              // tombstoneCount stays; payloadsReclaimed and bytesSaved (estimated: JSON length) grow
 
 // rejoin: a snapshot (validated when read back), restored under a NEW replica ID
 const json = serializeSnapshot(alice.snapshot());
@@ -196,7 +198,9 @@ type VersionVector = Map<string, number>;   // replicaId -> highest contiguous a
 - A local insert at visible index k lands at index k after convergence, on both replicas (this fails without Lamport-clock absorption).
 - Catch-up: repeating the `opsSince` exchange converges two or three replicas (and a late joiner), whatever order the catch-up operations arrive in.
 
-The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 75 distinct deliberate bugs in total), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
+Membership, garbage collection and snapshots (seeded, 150 runs each, in `frontier.properties.test.ts`, `gc.properties.test.ts`, `fencing.properties.test.ts` and `snapshot.properties.test.ts`): 6 frontier-safety, 10 GC-safety, 6 fencing and 6 snapshot-rejoin properties. They check, for example, that GC never changes what is visible, that a payload is reclaimed only when every member has the delete, and that a replica restored from a snapshot converges with one that stayed connected. These are tests, not a proof.
+
+The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 75 distinct deliberate bugs for that code alone; 278 caught across the kernel and the coordinator, summed from the commit messages), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
 
 ## Specification
 
@@ -215,6 +219,9 @@ Full specification documents are in `.kiro/specs/crdt-kernel/`:
 - An evicted peer cannot merge old edits beyond its cutoff; it must rejoin from a snapshot as a new replica.
 - The kernel assumes replicas do not forge or alter operations. For example, `applyInsert` ignores a second operation that reuses an existing ID even if its contents differ. That is correct for honest replicas but gives no protection against a buggy or malicious peer. The coordinator's frontier likewise assumes replicas report their version vectors honestly. The kernel also does not limit the size of the dependency buffer: a peer that sends many operations with a gap before them makes all of them stay buffered (5,000 were tried), so it assumes peers are honest. A peer that sends an operation at the Lamport limit stops other replicas from creating local operations.
 - A replica that loses its state must come back with a new replica ID. If it reused its old ID, it would issue Op IDs that already exist (for example `alice:1` again, with different content); other replicas drop those as duplicates and silently diverge. The demo apps therefore create a new replica ID on every page load and never store it.
+- A replica restored from a snapshot starts a fresh operation log, so it can only answer a hello with operations after the snapshot point.
+- The reclaimed-bytes numbers are estimates: the JSON length of a payload, not measured memory.
+- The demo apps sync through `BroadcastChannel`: tabs of one browser on one origin. Other browsers and devices are not connected, and nothing is stored between page loads.
 - Educational scope: not optimized for production performance.
 
 ## Prior art

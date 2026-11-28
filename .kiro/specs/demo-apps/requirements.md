@@ -43,7 +43,7 @@ Status: **done** for the Checklist (`apps/cursed-checklist`, 124 tests, checked 
 3. Staleness SHALL NOT be simulated with timers. Browsers throttle background tabs, so the demo is recorded in two separate windows.
 
 ### R4. Graveyard panel (D2, D3, D4)
-1. THE panel SHALL show: tombstones **(structure kept)**, payload bytes reclaimed, stable frontier, epoch, members, evicted members.
+1. THE panel SHALL show: tombstones **(structure kept)**, estimated payload bytes reclaimed (JSON length, not memory), stable frontier, epoch, members, evicted members.
 2. THE panel SHALL NOT say "tombstones removed": Stage 1 GC reclaims payloads only, and the tombstone count never goes down.
 3. WHEN a rejected edit is detected, THE panel SHALL say so (R6).
 

@@ -1184,7 +1184,8 @@ Applications (KER-078 to KER-080)
 
 ### Phase 9: Transport Layer and Coordinator Service
 
-- [ ] 75. **BroadcastChannel Transport (Multi-Tab Demo) [SHOULD]** (KER-75)
+- [x] 75. **BroadcastChannel Transport (Multi-Tab Demo) [SHOULD]** (KER-75)
+  - **Status note**: done in apps/cursed-checklist: src/transport.ts (BroadcastChannel wrapper), src/protocol.ts (every message encoded and parsed in one place), src/sync.ts (broadcasts local operations, applies remote ones, answers hello with opsSince, carries the coordinator view and frontier to the kernel). Convergence across tabs is covered by the sync tests and by the scripted real-Edge run of the whole demo (21 of 21 checks, also against the deployed site on 2026-11-28).
   - Create transport layer using BroadcastChannel API
   - Serialize/broadcast operations between tabs
   - Listen for and apply remote operations
@@ -1213,7 +1214,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Test: save → reload → verify state
 
 - [ ] 77. **Coordinator Service (Node.js) [MUST]** (KER-77)
-  - **Status note**: partly done: the decision logic is `coordinator/src/core.ts` (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 104 tests and 47 mutants caught. **Open** (box stays unticked): the adapters that carry it (the `/control` page in each app and a Node service with HTTP or WebSocket), the Graveyard panel display, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/`opsSince` exchange).
+  - **Status note**: partly done. Done: the decision logic is coordinator/src/core.ts (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 104 tests and 47 mutants caught; and a browser adapter, the Cursed Checklist control page (apps/cursed-checklist/src/coordinatorAdapter.ts, ControlApp.tsx), which runs the core, lists members, epoch and frontier, and has Exorcise and Abort. It is live on the deployed site. Open (box stays unticked because this task is the Node.js service): a Node service with HTTP or WebSocket around the core, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/opsSince exchange). Because the control page is the coordinator, reloading it resets it.
   - Create Node.js coordinator service:
     - Collect VV acknowledgments from replicas
     - Compute stable frontier

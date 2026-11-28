@@ -5,7 +5,8 @@
  *
  * Honest labels (the demo-apps design, "Graveyard panel"): Stage 1 GC drops only the PAYLOAD of a
  * buried item. The tombstone (the structural node) stays, so "tombstones" never goes down and the
- * panel says "structure kept". The savings are payload bytes.
+ * panel says "structure kept". The savings are ESTIMATED payload bytes: the kernel measures the JSON
+ * length of a payload (`estimatePayloadSize`), which is not the memory the browser frees.
  */
 import type { CRDT, OpIdKey } from '@bones/kernel';
 import { visibleItems } from './replica';

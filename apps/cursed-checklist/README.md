@@ -11,7 +11,7 @@ This is one of the two separate application folders required by the Skeleton Cre
 - A tab opened late, or reloaded, catches up from the other open tabs.
 - Each page load gets a new replica ID (`tab-<8 hex>.0`), shown at the bottom of the page. The ID is never stored.
 
-**Not built yet:** rejoin, other browsers or devices. Membership, the stable frontier and garbage collection exist but only run while the control page is open. The tombstones of completed items always stay; once the frontier passes their delete, only their text is reclaimed.
+**Not built yet:** the Rejoin button, other browsers or devices. Membership, the stable frontier and garbage collection exist but only run while the control page is open. The tombstones of completed items always stay; once the frontier passes their delete, only their text is reclaimed.
 
 ## Run it
 
@@ -29,7 +29,7 @@ npm run build      # typecheck + production build into dist/
 
 ## Deploy (GitHub Pages)
 
-`.github/workflows/pages.yml` builds the app (running its tests first) with `BASE_PATH=/<repo>/cursed-checklist/`, runs `node scripts/assemble-site.mjs` to put every built app under `_site/<app>/` with a landing page, and publishes it with the official Pages actions. **One-time setup, which only the repository owner can do:** Settings, Pages, Build and deployment, Source: "GitHub Actions". After the first push to `main` the site is at `https://<user>.github.io/<repo>/`, the app at `.../cursed-checklist/` and the control page at `.../cursed-checklist/control.html`. Locally the same build works with `BASE_PATH` unset (`/`).
+`.github/workflows/pages.yml` builds the app (running its tests first) with `BASE_PATH=/<repo>/cursed-checklist/`, runs `node scripts/assemble-site.mjs` to put every built app under `_site/<app>/` with a landing page, and publishes it with the official Pages actions. It is live: `https://keerthivasan-skv.github.io/Bones/`, the app at `.../cursed-checklist/` and the control page at `.../cursed-checklist/control.html`. (For a fork, the one-time setup is Settings, Pages, Build and deployment, Source: "GitHub Actions"; only the repository owner can change it.) Locally the same build works with `BASE_PATH` unset (`/`).
 
 The app and the control page must be opened from the same site (they share a `BroadcastChannel`), in windows of the same browser.
 

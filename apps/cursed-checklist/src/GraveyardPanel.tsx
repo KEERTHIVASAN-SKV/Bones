@@ -57,7 +57,7 @@ export function GraveyardPanel({ crdt, sync }: { crdt: CRDT<Item>; sync: Sync })
         <dd>
           {model.payloadsReclaimed} of {model.tombstones}
         </dd>
-        <dt>payload bytes reclaimed</dt>
+        <dt>estimated payload bytes reclaimed</dt>
         <dd>{model.bytesReclaimed}</dd>
         <dt>stable frontier</dt>
         <dd>
