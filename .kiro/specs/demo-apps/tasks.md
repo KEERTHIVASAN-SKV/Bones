@@ -63,8 +63,9 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - **Gate C is NOT yet met on the deployed URL:** the live site still serves `b7c6bbf`, which has no Rejoin. After the next push has deployed, run D6 on the live site and record it.
   - Dependencies: DA-2, DA-6.
 
-- [ ] DA-10. **Benchmark** (D7; R10)
+- [x] DA-10. **Benchmark** (D7; R10)
   - `kernel/scripts/bench-gc.mjs`: N operations with one stalled replica versus the same run after eviction.
+  - Done (2026-11-28): `npm run bench:gc` in `kernel/`. Four runs of one seeded history (no GC, stalled and never evicted, evicted, nobody stalled); it reports estimated payload bytes held in the sequence and in the log, the tombstone count (unchanged, and the script checks it), payloads reclaimed, estimated bytes saved and run time. Nine built-in checks; five deliberate kernel bugs each make it fail. The README contains the script's output, unedited, and its limits. No new tests were added to the suite.
   - Dependencies: DA-2.
 
 - [ ] DA-11. **Extract `shared/`** (R8; S5)

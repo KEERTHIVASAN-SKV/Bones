@@ -37,7 +37,7 @@ cd ..
 node scripts/quality-gate.mjs   # purity check, typecheck (src + tests), lint, tests
 ```
 
-Other kernel scripts (run inside `kernel/`): `npm run typecheck`, `npm run build`, `npm run lint`, `npm run coverage`.
+Other kernel scripts (run inside `kernel/`): `npm run typecheck`, `npm run build`, `npm run lint`, `npm run coverage`, `npm run bench:gc` (the GC benchmark, see below).
 
 ## Folder map
 
@@ -201,6 +201,40 @@ type VersionVector = Map<string, number>;   // replicaId -> highest contiguous a
 Membership, garbage collection and snapshots (seeded, 150 runs each, in `frontier.properties.test.ts`, `gc.properties.test.ts`, `fencing.properties.test.ts` and `snapshot.properties.test.ts`): 6 frontier-safety, 10 GC-safety, 6 fencing and 6 snapshot-rejoin properties. They check, for example, that GC never changes what is visible, that a payload is reclaimed only when every member has the delete, and that a replica restored from a snapshot converges with one that stayed connected. These are tests, not a proof.
 
 The test suite was also mutation-checked by hand: each guard in the RGA, version-vector rules, op log, buffer, validator and `CRDT` pipeline was removed in turn (about 75 distinct deliberate bugs for that code alone; 278 caught across the kernel and the coordinator, summed from the commit messages), and a test had to fail. Survivors found this way were fixed by adding tests, not by weakening the check.
+
+## Benchmark: what evicting a stalled replica frees
+
+`kernel/scripts/bench-gc.mjs` replays one seeded history through the built kernel (`kernel/dist`) and reports what garbage collection holds and frees. Run it with `cd kernel && npm run bench:gc` (it builds first). The script plays the coordinator's part with the kernel's own functions (`computeStableFrontier`, `removeReplica`); it is not the browser app. The same history is replayed four ways: with no GC at all, with one replica stalled and never evicted, with that replica evicted, and with nobody stalled. The numbers below are the script's output, pasted from a run on 2026-11-28; only the run times change from run to run. The script checks its own results and exits with an error if one fails (GC safety against the replicas' real version vectors, an unchanged visible list, an unchanged tombstone count, the log holding no dropped payload).
+Node v22.17.0, seed 20261128, 2,000 operations (40% deletes, 100-character payloads), 3 replicas. c.0 is live for the first 200 operations and then stalls (sends and receives nothing). Numbers are read from survivor a.0. Cutoff used for the eviction: 71. Eviction step (membership change + GC pass): 2.6 ms.
+
+| run | tombstones (structure kept) | visible items | payloads reclaimed | estimated payload bytes held in the sequence | estimated payload bytes held in the operation log | estimated bytes saved | run time (ms) |
+|---|---|---|---|---|---|---|---|
+| no GC at all | 791 | 418 | 0 of 791 | 134,199 | 134,199 | 0 | 157.6 |
+| c stalled, never evicted (= before the eviction) | 791 | 418 | 78 of 791 | 125,541 | 125,541 | 8,658 | 161.1 |
+| c stalled, then exorcised (after the eviction) | 791 | 418 | 791 of 791 | 46,398 | 46,398 | 87,801 | 167.2 |
+| nobody stalled (reference) | 791 | 418 | 791 of 791 | 46,398 | 46,398 | 87,801 | 147.4 |
+
+Eviction freed 79,143 of 125,541 estimated payload bytes held in the sequence (63.0%) and 79,143 of 125,541 in the operation log (63.0%). The tombstone count stayed at 791: Stage 1 GC reclaims payloads, not structure.
+
+Estimated bytes are the JSON length of each payload (`estimatePayloadSize`), not memory. The sequence and the log share the same payload objects, so the two byte columns are not added together. Run times depend on the machine; every other number is the same on every run.
+
+Built-in checks:
+- pass: the visible list is identical in all four runs (GC changes only what is held, never what is shown)
+- pass: a.0 and b.0 hold the same list after the eviction
+- pass: the eviction did not change the tombstone count (structure is kept)
+- pass: nothing was reclaimed in the "no GC" run
+- pass: GC safety, checked against the replicas' real version vectors: no payload was reclaimed unless every active member had applied a delete of it (all four runs, and the stalled replica counts as active until it is evicted)
+- pass: while c is stalled and not evicted, fewer payloads are reclaimed than when nobody is stalled
+- pass: the eviction reclaimed payloads and freed estimated bytes
+- pass: after the eviction the stalled run holds exactly what the nobody-stalled run holds
+- pass: the operation log keeps no payload that the sequence has dropped (log redaction, design decision D-A)
+
+What this shows and does not show:
+
+- While `c.0` is stalled and not evicted, only payloads whose delete `c.0` applied before it stalled can be reclaimed (78 of 791). After it is exorcised, all 791 are, and the stalled run ends with exactly what the run in which nobody stalled holds.
+- The tombstones are not freed: Stage 1 GC reclaims payloads only. The structural nodes stay, so the tombstone count never goes down.
+- The unit is estimated bytes (JSON length of the payload), which is not the memory a browser uses. The sequence and the log hold the same payload objects, so the two byte columns are not added together.
+- It is one seeded scenario with 3 replicas and 100-character payloads, in one process, with full delivery between live replicas. It says nothing about other workloads, network loss, or large documents.
 
 ## Specification
 
