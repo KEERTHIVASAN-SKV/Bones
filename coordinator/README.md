@@ -25,7 +25,7 @@ cd coordinator
 npm ci
 npm run typecheck
 npm run lint
-npm test          # 104 tests, 8 of them drive the core with real kernel replicas
+npm test          # 116 tests: 104 on the core (8 with real kernel replicas) and 12 whole-stack seeds (tests/chaos.integration.test.ts)
 ```
 
 The coordinator imports the kernel source through an alias, so it needs no kernel install of its own. Dev dependencies are pinned to the kernel's versions; `npm audit` reports the same dev-tooling advisories as the kernel.

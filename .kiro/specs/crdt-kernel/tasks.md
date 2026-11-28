@@ -1031,7 +1031,8 @@ Applications (KER-078 to KER-080)
 
 ### Phase 7: Integration Tests
 
-- [ ] 66. **Multi-Replica Convergence (2 replicas)** (KER-66)
+- [x] 66. **Multi-Replica Convergence (2 replicas)** (KER-66)
+  - **Status note**: done as a whole-stack test, coordinator/tests/chaos.integration.test.ts: 12 seeds, real CRDT replicas and the real CoordinatorCore joined by a seeded lossy network (25% dropped, 15% duplicated, delivered 0 to 3 rounds late), one replica stalled and then evicted. It checks convergence of the survivors, that GC never changes the visible sequence (redacted log replayed into a replica that never ran GC), GC safety against the replicas version vectors (before and after the eviction), that every tombstone is reclaimed after the eviction, that the log keeps no payload of a reclaimed element, and that the evicted replica offline edits are refused. Four deliberate kernel bugs each made all 12 seeds fail for the intended reason. The two-replica convergence cases are also covered by the CRDT multi-replica property tests in kernel/tests.
   - Set up 2 CRDT replicas with deterministic network
   - Generate random insert/delete operations on both
   - Deliver messages in various orders (deterministic, seeded)
@@ -1046,6 +1047,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Integration test passes; verify convergence in all cases
 
 - [ ] 67. **Multi-Replica Convergence (3+ replicas)** (KER-67)
+  - **Status note**: partly done, box stays unticked. The whole-stack test (KER-66 note) runs 3 replicas (two survivors and one stalled), and so do the kernel property tests (r1, r2, r3, in rga.properties, crdt.properties and the shared support/history.ts); nothing runs 5 or 10+ replicas yet. The criterion "works with 3, 5, 10+ replicas" is therefore not met. Optional if time remains: parameterize the replica count in coordinator/tests/chaos.integration.test.ts.
   - Extend to 3 or more replicas
   - Test with varying network delays/reordering
   - Verify all replicas converge identically
@@ -1214,7 +1216,7 @@ Applications (KER-078 to KER-080)
   - **Validation**: Test: save → reload → verify state
 
 - [ ] 77. **Coordinator Service (Node.js) [MUST]** (KER-77)
-  - **Status note**: partly done. Done: the decision logic is coordinator/src/core.ts (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 104 tests and 47 mutants caught; and a browser adapter, the Cursed Checklist control page (apps/cursed-checklist/src/coordinatorAdapter.ts, ControlApp.tsx), which runs the core, lists members, epoch and frontier, and has Exorcise and Abort. It is live on the deployed site. Open (box stays unticked because this task is the Node.js service): a Node service with HTTP or WebSocket around the core, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/opsSince exchange). Because the control page is the coordinator, reloading it resets it.
+  - **Status note**: partly done. Done: the decision logic is coordinator/src/core.ts (pure; frontier from hellos, membership, manual two-phase eviction with the prepare/hold round, pending/complete tracking, rejection of stale and non-member control messages, no automatic eviction), with 116 tests (104 on the core, 12 whole-stack) and 47 mutants caught; and a browser adapter, the Cursed Checklist control page (apps/cursed-checklist/src/coordinatorAdapter.ts, ControlApp.tsx), which runs the core, lists members, epoch and frontier, and has Exorcise and Abort. It is live on the deployed site. Open (box stays unticked because this task is the Node.js service): a Node service with HTTP or WebSocket around the core, and "Re-send backfill requests while pending" (the core re-asks a silent survivor on its hello and re-broadcasts the frontier; survivors backfill through the normal hello/opsSince exchange). Because the control page is the coordinator, reloading it resets it.
   - Create Node.js coordinator service:
     - Collect VV acknowledgments from replicas
     - Compute stable frontier

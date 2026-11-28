@@ -18,7 +18,7 @@ Last verified numbers (tests, coverage) are in [STATUS.md](STATUS.md). Summary:
 | Kernel stable frontier, Stage 1 GC (payloads only; the tombstones stay) and the operation-log redaction that makes the freed memory real (KER-023 to KER-026) | done, tested, mutation-checked |
 | Kernel eviction prepare phase (`holdAuthor`), snapshots and rejoin as a new incarnation (KER-027 to KER-033) | done, tested, mutation-checked |
 | Gate A property tests: frontier safety, GC safety including the redacted log, fencing, snapshot rejoin (22 + 6 properties) | done, seeded |
-| `coordinator/` | the pure decision core (membership, frontier, manual two-phase eviction) is built and tested (104 tests); it runs in the browser on the Checklist's control page. No Node service |
+| `coordinator/` | the pure decision core (membership, frontier, manual two-phase eviction) is built and tested (116 tests, including a whole-stack test that runs real replicas and the core over a lossy network with a stalled replica and an eviction); it runs in the browser on the Checklist's control page. No Node service |
 | `apps/cursed-checklist` | works: sync across tabs, the control page (Exorcise), the Graveyard panel, Stall and Stress buttons (207 tests; the demo script D1 to D5 passed on the deployed site in real Edge, driven by a script). Live at the URL above. Rejoin is not built in the app yet |
 | `apps/graveyard-whiteboard` | placeholder (the second app folder the Skeleton Crew category requires) |
 

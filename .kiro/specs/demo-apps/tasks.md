@@ -28,7 +28,7 @@ Decision filter before starting anything: does it appear in the demo script, a p
   - Tracked in `.kiro/specs/crdt-kernel/tasks.md`.
 
 - [x] DA-3. **Coordinator core** (D3, D4; R5)
-  - Done: `coordinator/src/core.ts` (`CoordinatorCore`: `onHello`, `startEviction`, `onPrepared`, `abortEviction`, `getStatus`), pure (checked by `scripts/check-purity.mjs`), 104 tests including 8 that drive it with real kernel replicas (stall, exorcise, reclaim, fence, a live target, lost messages), 47 mutants caught.
+  - Done: `coordinator/src/core.ts` (`CoordinatorCore`: `onHello`, `startEviction`, `onPrepared`, `abortEviction`, `getStatus`), pure (checked by `scripts/check-purity.mjs`), 116 tests: 104 on the core including 8 that drive it with real kernel replicas (stall, exorcise, reclaim, fence, a live target, lost messages), plus a 12-seed whole-stack test over a lossy network (`coordinator/tests/chaos.integration.test.ts`), 47 mutants caught.
   - Not here yet: the adapters that turn effects into messages (DA-4, DA-5).
   - Dependencies: DA-2.
 
